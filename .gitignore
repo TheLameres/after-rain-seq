@@ -1,0 +1,60 @@
+# REPL command history (created next to config.yaml)
+repl_history
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# uv / virtualenv
+.venv/
+venv/
+env/
+
+# uv lock (keep uv.lock — it's checked in by convention)
+# uv.lock  ← do NOT ignore this
+
+# pytest
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# JetBrains IDEs
+.idea/
+*.iml
+
+# VS Code
+.vscode/
+
+# Logs
+*.log
+
+# Byte-compiled
+*.pyc
+
+# Distribution / packaging
+*.whl
+*.tar.gz
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+/.qwen/
+
+.claude/
+.playwright-mcp/
+plans/
