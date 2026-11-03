@@ -80,11 +80,6 @@ class MelodicTrack(Track):
         return self.profile.name
 
     @property
-    def mutation_count(self) -> int:
-        """Изменений с последней заморозки (0 — MutationEngine не подключён)."""
-        return 0
-
-    @property
     def pattern_length(self) -> float:
         """Длина паттерна в beats (период циклического повторения).
 
@@ -101,6 +96,7 @@ class MelodicTrack(Track):
         синхронизируется через ``get_state()``.
         """
         self.mutate = 0.0
+        self.reset_mutation_count()
 
     # ------------------------------------------------------------------
     # Смена профиля

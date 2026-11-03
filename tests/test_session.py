@@ -695,3 +695,80 @@ def test_session_freeze_all_empty():
     s.freeze_all()
     s.evolve_all()
     assert s.total_mutation_count == 0
+
+
+# ---------------------------------------------------------------------------
+# §4.4 — счётчик мутаций отражает реальные изменения
+# ---------------------------------------------------------------------------
+
+
+def test_track_mutation_count_increments():
+    """record_mutation() увеличивает счётчик дорожки, а не константу."""
+    t = MelodicTrack(name="Pad 1", profile_name="pad")
+    t.record_mutation()
+    t.record_mutation()
+    assert t.mutation_count == 2
+
+
+def test_track_freeze_resets_mutation_count():
+    """freeze() обнуляет счётчик — отсчёт начинается заново."""
+    t = MelodicTrack(name="Pad 1", profile_name="pad")
+    t.record_mutation(5)
+    t.freeze()
+    assert t.mutation_count == 0
+
+
+def test_drum_track_mutation_count_shared_counter():
+    """DrumTrack пишет в общий счётчик базового класса."""
+    dt = DrumTrack(name="Drum 1")
+    dt.mutate = 1.0
+    dt.maybe_mutate(current_beat=1000.0)
+    assert dt.mutation_count > 0
+    dt.freeze()
+    assert dt.mutation_count == 0
+
+
+def test_session_total_mutation_count_sums_tracks():
+    """total_mutation_count суммирует реальные счётчики дорожек."""
+    from src.session.model.drum_track import DrumTrack as _DT
+
+    s = Session()
+    pad = s.create_melodic_track(profile="pad")
+    drum = s.create_drum_track()
+    pad.record_mutation(3)
+    assert isinstance(drum, _DT)
+    drum.record_mutation(2)
+    assert s.total_mutation_count == 5
+
+
+# ---------------------------------------------------------------------------
+# §4.7 — sources объявлены в базовом классе как свойство
+# ---------------------------------------------------------------------------
+
+
+def test_sources_is_base_class_property():
+    """sources — property базового класса, а не подмена атрибута наследником."""
+    from src.session.model.drum_track import DrumTrack as _DT
+    from src.session.model.track import Track
+
+    assert isinstance(MelodicTrack.sources, property)
+    assert isinstance(_DT.sources, property)
+    # Drum только сужает контракт через accepts_sources, не переопределяя setter
+    assert _DT.accepts_sources is not Track.accepts_sources
+
+
+def test_sources_limit_enforced():
+    """Больше MAX_SOURCES источников — ValueError."""
+    from src.session.model.track import MAX_SOURCES
+
+    t = MelodicTrack(name="Stab 1", profile_name="stab")
+    t.sources = tuple(f"Pad {i}" for i in range(MAX_SOURCES))
+    with pytest.raises(ValueError, match="Максимум"):
+        t.sources = tuple(f"Pad {i}" for i in range(MAX_SOURCES + 1))
+
+
+def test_sources_normalises_list():
+    """Список приводится к кортежу — контракт типа не нарушается."""
+    t = MelodicTrack(name="Sub 1", profile_name="sub")
+    t.sources = ["Pad 1"]  # type: ignore[assignment]
+    assert t.sources == ("Pad 1",)

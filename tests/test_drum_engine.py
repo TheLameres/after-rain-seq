@@ -224,3 +224,18 @@ def test_all_notes_off_uses_current_label():
     events = _drain(q)
     assert len(events) == 1
     assert events[0].port_label == "Test Port"
+
+
+def test_muted_track_sends_nothing():
+    """§4.6: mute дорожки останавливает доставку, генерация идёт."""
+    engine, q, dt = _make_engine()
+    dt.lanes[0].pattern[0] = 1
+    dt.muted = True
+    assert engine.tick(current_beat=0.0) == 0
+    assert _drain(q) == []
+    # генерация всё равно произошла — outbox наполнен (§4.5)
+    assert len(dt.outbox) == 1
+
+    dt.muted = False
+    assert engine.tick(current_beat=1.0) == 1
+    assert len(_drain(q)) == 1

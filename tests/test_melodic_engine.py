@@ -132,12 +132,14 @@ class TestMelodicEngine:
         while not event_queue.empty():
             events.append(event_queue.get_nowait())
 
-        # При swing=0.5 длительности должны отличаться от базовых
-        # (чётные шаги укорачиваются, нечётные удлиняются)
+        # При swing=0.5 чётные шаги сетки укорачиваются, нечётные удлиняются.
+        # Ноты одного аккорда звучат одновременно — свинг у них одинаковый
+        # (у stateful-свинга они получали разные длительности: §4.2).
         durations = [ev.duration for ev in events if ev.duration is not None]
         assert len(durations) > 0
-        # Не все длительности равны (свинг изменил некоторые)
-        assert len(set(durations)) > 1
+        assert len(set(durations)) == 1
+        # И значение отличается от невзвешенного gate*step
+        assert durations[0] != 0.9
 
     def test_all_notes_off(
         self,
@@ -599,3 +601,32 @@ class TestMutationIntegration:
         me.tick(state.next_mutation_beat)  # mutate=0 — мутации нет
         after = [n.degree for n in engine._pattern()[0]]
         assert after == before
+
+
+class TestMute:
+    """§4.6: Track.muted глушит дорожку в движке."""
+
+    def test_muted_track_sends_nothing(
+        self,
+        pad_track: MelodicTrack,
+        harmony: Harmony,
+        event_queue: queue.Queue[TransportEvent],
+    ) -> None:
+        swing = SwingApplier(SwingConfig(amount=0.0))
+        pad_track.muted = True
+        engine = MelodicEngine(pad_track, harmony, event_queue, "default", swing)
+        assert engine.tick(0.0) == 0
+        assert event_queue.empty()
+
+    def test_unmute_resumes(
+        self,
+        pad_track: MelodicTrack,
+        harmony: Harmony,
+        event_queue: queue.Queue[TransportEvent],
+    ) -> None:
+        swing = SwingApplier(SwingConfig(amount=0.0))
+        pad_track.muted = True
+        engine = MelodicEngine(pad_track, harmony, event_queue, "default", swing)
+        engine.tick(0.0)
+        pad_track.muted = False
+        assert engine.tick(1.0) > 0

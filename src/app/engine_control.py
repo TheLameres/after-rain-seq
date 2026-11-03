@@ -347,6 +347,22 @@ class AppEngineControl(EngineControl):
         track.mutate = float(mutate)
         return f'track "{name}": mutate = {mutate:.2f}'
 
+    def set_track_muted(self, name: str, muted: bool) -> str:
+        """Заглушить/разглушить дорожку (§4.6).
+
+        Дорожка продолжает генерировать и мутировать — глушится только
+        доставка, поэтому снятие mute возвращает её в такт.
+        """
+        session = self._app.session
+        if session is None:
+            return "error: session not available"
+        track = session.get_track(name)
+        if track is None:
+            return f"error: track {name!r} not found"
+        track.muted = bool(muted)
+        state = "muted" if track.muted else "unmuted"
+        return f'track "{name}": {state}'
+
     def evolve_track(self, name: str) -> str:
         """Разморозить одну дорожку (MelodicTrack: mutate=0.5, DrumTrack: 0.5)."""
         session = self._app.session

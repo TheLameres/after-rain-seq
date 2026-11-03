@@ -114,3 +114,19 @@ class TestEvolveTrack:
     def test_unknown_track_is_error(self) -> None:
         ctl, _session = make_control()
         assert ctl.evolve_track("Nope").startswith("error:")
+
+
+class TestSetTrackMuted:
+    """§4.6: mute через фасад."""
+
+    def test_mutes_and_unmutes(self) -> None:
+        ctl, session = make_control()
+        pad = session.create_melodic_track("pad")
+        assert "muted" in ctl.set_track_muted(pad.name, True)
+        assert session.get_track(pad.name).muted is True
+        assert "unmuted" in ctl.set_track_muted(pad.name, False)
+        assert session.get_track(pad.name).muted is False
+
+    def test_unknown_track_is_error(self) -> None:
+        ctl, _session = make_control()
+        assert ctl.set_track_muted("Nope", True).startswith("error:")

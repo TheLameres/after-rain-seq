@@ -505,6 +505,7 @@ class App:
                     bpm=self._sync_bpm,
                     degrees=list(track.degrees),
                     gate=track.gate,
+                    track=track,  # §4.4: счётчик живёт на дорожке
                 )
         log.info(
             "MutationEngine создан, дорожек: %d",

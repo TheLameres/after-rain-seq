@@ -195,7 +195,7 @@ class TestSwingIntegration:
         # (indirectly verified by no errors and correct delivery)
 
     def test_swing_reset_on_all_notes_off(self):
-        """all_notes_off() resets the swing applier."""
+        """all_notes_off() безопасен для свинга (тот не хранит состояния)."""
         transport, q, _ = _make_transport(swing_amount=0.5)
         q.put(
             TransportEvent.note_on(
@@ -203,10 +203,11 @@ class TestSwingIntegration:
             )
         )
         transport.process_events(current_beat=0.0)
-        # After all_notes_off, swing step is reset
         transport.all_notes_off()
-        # Verify by checking that swing._step is 0
-        assert transport.swing._step == 0  # type: ignore[attr-defined]
+        # Позиционный свинг: результат зависит только от beat
+        assert transport.swing.apply_duration(base=0.5, beat=0.0) == pytest.approx(
+            0.375
+        )
 
 
 class TestCCFlush:
@@ -259,11 +260,17 @@ class TestAllNotesOff:
         adapter.all_notes_off.assert_called_once()
 
     def test_resets_swing(self):
-        """all_notes_off() resets the swing applier."""
+        """all_notes_off() не ломает свинг (stateful-счётчика больше нет)."""
         transport, _, _ = _make_transport(swing_amount=0.5)
         transport.all_notes_off()
-        assert transport.swing._step == 0  # type: ignore[attr-defined]
-        assert transport.swing._last_beat is None  # type: ignore[attr-defined]
+        assert not hasattr(transport.swing, "_step")
+        # beat=0.5 → нечётный шаг (длинный), beat=1.0 → снова чётный
+        assert transport.swing.apply_duration(base=0.5, beat=0.5) == pytest.approx(
+            0.625
+        )
+        assert transport.swing.apply_duration(base=0.5, beat=1.0) == pytest.approx(
+            0.375
+        )
 
 
 class TestTransportProperties:
@@ -273,6 +280,33 @@ class TestTransportProperties:
         """swing property returns the SwingApplier."""
         transport, _, _ = _make_transport(swing_amount=0.3)
         assert transport.swing.amount == 0.3
+
+
+def test_transport_does_not_advance_swing_step() -> None:
+    """Regression (plan §4.2): Transport must not apply swing to durations.
+
+    Swing is applied once in the generating engine. Transport delivering
+    NOTE_ON must leave the SwingApplier step counter untouched, otherwise
+    the even/odd alternation breaks.
+    """
+    transport, q, _ = _make_transport(swing_amount=0.5)
+    swing = transport.swing
+    before = repr(swing)
+
+    for beat in (0.0, 0.5, 1.0, 1.5):
+        q.put(
+            TransportEvent.note_on(
+                port_label="Synth A",
+                channel=0,
+                note=60,
+                velocity=100,
+                duration=0.5,
+                beat=beat,
+            )
+        )
+    transport.process_events(current_beat=0.0)
+
+    assert repr(swing) == before
 
 
 def test_transport_does_not_advance_swing_step() -> None:

@@ -17,6 +17,7 @@ desynchronisation sounds like a bug, not a groove.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
@@ -90,11 +91,12 @@ def swing_duration(base: float, step_index: int, amount: float) -> float:
 
 
 class SwingApplier:
-    """Applies swing to a sequence of (duration, beat) pairs.
+    """Applies swing to a duration at a position in musical time.
 
-    Tracks the step index internally so that consecutive calls form
-    a continuous swing grid.  Resets automatically when a beat
-    discontinuity is detected (e.g. after a timeline reset).
+    The swing step is derived from the *beat*, not from a call counter:
+    ``step = floor(beat * grid) % grid``.  Two identical ``(duration,
+    beat)`` pairs therefore always give the same result regardless of
+    call history or of how many tracks are running (§4.2).
 
     Usage
     -----
@@ -105,8 +107,6 @@ class SwingApplier:
 
     def __init__(self, config: SwingConfig) -> None:
         self._config = config
-        self._step: int = 0
-        self._last_beat: float | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -118,10 +118,7 @@ class SwingApplier:
         return self._config.amount
 
     def set_amount(self, amount: float) -> None:
-        """Установить величину свинга в рантайме (0.0–1.0).
-
-        Шаг счётчика не сбрасываем — сетка свинга непрерывна.
-        """
+        """Установить величину свинга в рантайме (0.0–1.0)."""
         self._config = SwingConfig(amount=amount, grid=self._config.grid)
 
     @property
@@ -148,34 +145,42 @@ class SwingApplier:
         if self._config.amount == 0.0:
             return base
 
-        # Detect discontinuity: beat jumped backwards or forward by
-        # more than 2 bars — reset step counter.
-        if self._last_beat is not None:
-            delta = beat - self._last_beat
-            if delta < 0 or delta > 8.0:
-                self._step = 0
+        # Позиция в сетке свинга берётся из музыкального времени, а не из
+        # порядка вызовов: иначе чередование ломается, когда зовут несколько
+        # дорожек (§4.2).
+        grid = self._config.grid
+        step_index = math.floor(beat * grid) % grid
+        return swing_duration(base, step_index, self._config.amount)
 
-        step_index = self._step % self._config.grid
-        result = swing_duration(base, step_index, self._config.amount)
+    def apply_step(self, base: float, step_index: int) -> float:
+        """Применить свинг к длительности на шаге сетки.
 
-        self._step += 1
-        self._last_beat = beat
-        return result
+        Для движков, у которых сетка задана номером шага паттерна, а не
+        абсолютным beat (ударные: шаг = 1/16 при ``steps=16``).
+
+        Parameters
+        ----------
+        base:
+            Базовая длительность в долях.
+        step_index:
+            Номер шага паттерна (0-based), неубывающий.
+
+        Returns
+        -------
+        float
+            Свингованная длительность.
+        """
+        return swing_duration(base, step_index % self._config.grid, self._config.amount)
 
     def reset(self) -> None:
-        """Reset the internal step counter.
+        """No-op: свинг не хранит состояния.
 
-        Call on timeline reset / stop to ensure swing starts fresh.
+        Оставлен для совместимости — вызывается на STOP/панике.
         """
-        self._step = 0
-        self._last_beat = None
 
     # ------------------------------------------------------------------
     # Dunder
     # ------------------------------------------------------------------
 
     def __repr__(self) -> str:
-        return (
-            f"SwingApplier(amount={self._config.amount}, "
-            f"grid={self._config.grid}, step={self._step})"
-        )
+        return f"SwingApplier(amount={self._config.amount}, grid={self._config.grid})"

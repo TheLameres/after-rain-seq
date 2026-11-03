@@ -90,7 +90,6 @@ class DrumTrack(Track):
         self._base_patterns: list[list[int]] = [
             list(lane.pattern) for lane in self.lanes
         ]
-        self._mutation_count: int = 0
         self._last_mutation_beat: float = 0.0
         self._next_mutation_beat: float = self._compute_next_mutation_beat(0.0)
 
@@ -99,17 +98,9 @@ class DrumTrack(Track):
     # ------------------------------------------------------------------
 
     @property
-    def sources(self) -> tuple[str, ...]:
-        """Drum не участвует в графе — всегда пусто."""
-        return ()
-
-    @sources.setter
-    def sources(self, value: tuple[str, ...]) -> None:
-        if value:
-            raise ValueError(
-                "Drum-трек не участвует в графе гармонии, " "источники недопустимы"
-            )
-        # Пустое значение — разрешено (инициализация базового класса).
+    def accepts_sources(self) -> bool:
+        """Drum не участвует в графе — источники запрещены (§4.7)."""
+        return False
 
     # ------------------------------------------------------------------
     # Генерация
@@ -134,6 +125,9 @@ class DrumTrack(Track):
             events.extend(lane_events)
 
         events.sort(key=lambda e: e.beat)
+        # §4.5: outbox типизирован как ChordEvent | DrumEvent — публикуем
+        # свои события, иначе current()/history() у drum-дорожки всегда пусты.
+        self.outbox.extend(events)
         return events
 
     def _generate_lane(self, lane_idx: int, lane: DrumLane) -> list[DrumEvent]:
@@ -254,7 +248,7 @@ class DrumTrack(Track):
             # Переключить: 0→1, 1→2
             new_value = old_value + 1
             lane.pattern[step_idx] = new_value
-            self._mutation_count += 1
+            self.record_mutation(1)
             log.debug(
                 "DrumTrack %s: lane %d step %d %d→%d",
                 self.name,
@@ -279,7 +273,8 @@ class DrumTrack(Track):
 
         lane_idx, step_idx, base_val = self._rng.choice(candidates)
         self.lanes[lane_idx].pattern[step_idx] = base_val
-        self._mutation_count -= 1
+        if self._mutation_count > 0:
+            self.record_mutation(-1)
         log.debug(
             "DrumTrack %s: revert lane %d step %d → %d",
             self.name,
@@ -288,15 +283,10 @@ class DrumTrack(Track):
             base_val,
         )
 
-    @property
-    def mutation_count(self) -> int:
-        """Сколько изменений сделано с последней заморозки."""
-        return self._mutation_count
-
     def freeze(self) -> None:
         """Заморозить мутацию — запомнить текущий паттерн как базовый."""
         self._base_patterns = [list(lane.pattern) for lane in self.lanes]
-        self._mutation_count = 0
+        self.reset_mutation_count()
         # §4.3: без mutate=0 maybe_mutate продолжал мутировать после freeze.
         self.mutate = 0.0
         log.info("DrumTrack %s: frozen", self.name)

@@ -174,3 +174,60 @@ class TestSwingApplier:
         assert d1 > 0.25  # step 1, odd
         assert d2 < 0.25  # step 2, even
         assert d3 > 0.25  # step 3, odd
+
+
+class TestSwingIsStateless:
+    """§4.2 acceptance: same (duration, beat) → same result, always."""
+
+    def test_identical_inputs_identical_output(self):
+        applier = SwingApplier(SwingConfig(amount=0.5))
+        first = applier.apply_duration(base=0.5, beat=0.5)
+        for _ in range(10):
+            applier.apply_duration(base=0.5, beat=0.25)
+        assert applier.apply_duration(base=0.5, beat=0.5) == first
+
+    def test_two_tracks_do_not_disturb_each_other(self):
+        """Interleaved calls (two tracks) keep per-position parity."""
+        applier = SwingApplier(SwingConfig(amount=0.5))
+        alone_a = [
+            applier.apply_duration(base=0.5, beat=b) for b in (0.0, 0.5, 1.0, 1.5)
+        ]
+
+        applier2 = SwingApplier(SwingConfig(amount=0.5))
+        interleaved: list[float] = []
+        for b in (0.0, 0.5, 1.0, 1.5):
+            # вторая дорожка «шумит» между шагами первой
+            applier2.apply_duration(base=0.5, beat=b + 0.25)
+            interleaved.append(applier2.apply_duration(base=0.5, beat=b))
+
+        assert interleaved == alone_a
+        assert interleaved[0] < 0.5 < interleaved[1]
+
+    def test_beat_position_determines_parity(self):
+        applier = SwingApplier(SwingConfig(amount=0.5))
+        # чётные 1/8 — короткие, нечётные — длинные, независимо от порядка
+        assert applier.apply_duration(base=0.5, beat=4.0) < 0.5
+        assert applier.apply_duration(base=0.5, beat=2.0) < 0.5
+        assert applier.apply_duration(base=0.5, beat=1.5) > 0.5
+
+
+class TestApplyStep:
+    """apply_step — для сеток, заданных номером шага паттерна."""
+
+    def test_alternates_by_step(self):
+        applier = SwingApplier(SwingConfig(amount=0.5))
+        short = applier.apply_step(base=0.25, step_index=0)
+        long_ = applier.apply_step(base=0.25, step_index=1)
+        assert short < 0.25 < long_
+
+    def test_matches_apply_duration_when_step_is_beat(self):
+        """При grid=2 и step=2*beat результаты совпадают."""
+        applier = SwingApplier(SwingConfig(amount=0.4))
+        for beat in (0.0, 0.5, 1.0, 1.5):
+            assert applier.apply_step(0.5, int(beat * 2)) == applier.apply_duration(
+                base=0.5, beat=beat
+            )
+
+    def test_wraps_around_grid(self):
+        applier = SwingApplier(SwingConfig(amount=0.5))
+        assert applier.apply_step(0.25, 0) == applier.apply_step(0.25, 4)

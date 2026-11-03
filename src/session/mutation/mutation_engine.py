@@ -65,6 +65,8 @@ class MutationEngine:
         self._track_profiles: dict[str, str] = {}
         self._track_mutate: dict[str, float] = {}
         self._track_bpm: dict[str, float] = {}
+        # §4.4: дорожки-владельцы счётчика (пишем в них, читаем из них).
+        self._track_refs: dict[str, object] = {}
 
     # ------------------------------------------------------------------
     # Регистрация
@@ -83,6 +85,7 @@ class MutationEngine:
         gate: float = 0.5,
         density: float = 0.5,
         register: int = 0,
+        track: object | None = None,
     ) -> None:
         """Зарегистрировать мелодическую дорожку для мутации.
 
@@ -100,8 +103,11 @@ class MutationEngine:
             gate: Базовый gate (для ParamDrift).
             density: Базовая density (для ParamDrift).
             register: Базовый register (для ParamDrift).
+            track: Дорожка-владелец счётчика (§4.4); движок пишет в неё.
         """
         effective_mutate = mutate if mutate is not None else self._default_mutate
+        if track is not None:
+            self._track_refs[track_name] = track
         self._track_profiles[track_name] = profile_name
         self._track_mutate[track_name] = effective_mutate
         self._track_bpm[track_name] = bpm
@@ -144,6 +150,7 @@ class MutationEngine:
         Аргументы:
             track_name: Имя дорожки.
         """
+        self._track_refs.pop(track_name, None)
         self._note_drifts.pop(track_name, None)
         self._euclidean_drifts.pop(track_name, None)
         self._param_drifts.pop(track_name, None)
@@ -174,9 +181,17 @@ class MutationEngine:
 
             # Деградация: с вероятностью mutate откатываем
             if state.mutation_count > 0 and self._rng.random() < state.mutate:
-                self._apply_revert(name)
+                changed = self._apply_revert(name)
+                delta = -1
             else:
-                self._apply_mutation(name)
+                changed = self._apply_mutation(name)
+                delta = 1
+            # §4.4: счётчик — на дорожке (источник истины, §3.4).
+            if changed:
+                track = self._track_refs.get(name)
+                recorder = getattr(track, "record_mutation", None)
+                if callable(recorder):
+                    recorder(delta)
 
             bpm = self._track_bpm.get(name, 120.0)
             new_state = MutationState(
@@ -189,23 +204,33 @@ class MutationEngine:
             mutated.append(name)
         return mutated
 
-    def _apply_mutation(self, track_name: str) -> None:
-        """Применить мутацию к дорожке через её механизм."""
-        if track_name in self._note_drifts:
-            self._note_drifts[track_name].drift_one(self._rng)
-        elif track_name in self._euclidean_drifts:
-            self._euclidean_drifts[track_name].drift(self._rng)
-        elif track_name in self._param_drifts:
-            self._param_drifts[track_name].drift_one(self._rng)
+    def _apply_mutation(self, track_name: str) -> bool:
+        """Применить мутацию к дорожке через её механизм.
 
-    def _apply_revert(self, track_name: str) -> None:
-        """Откатить одно изменение к базовому."""
+        Returns:
+            True, если механизм действительно что-то изменил (§4.4).
+        """
         if track_name in self._note_drifts:
-            self._note_drifts[track_name].revert_one(self._rng)
-        elif track_name in self._euclidean_drifts:
-            self._euclidean_drifts[track_name].revert(self._rng)
-        elif track_name in self._param_drifts:
-            self._param_drifts[track_name].revert_one(self._rng)
+            return bool(self._note_drifts[track_name].drift_one(self._rng))
+        if track_name in self._euclidean_drifts:
+            return bool(self._euclidean_drifts[track_name].drift(self._rng))
+        if track_name in self._param_drifts:
+            return self._param_drifts[track_name].drift_one(self._rng) is not None
+        return False
+
+    def _apply_revert(self, track_name: str) -> bool:
+        """Откатить одно изменение к базовому.
+
+        Returns:
+            True, если механизм действительно что-то откатил.
+        """
+        if track_name in self._note_drifts:
+            return bool(self._note_drifts[track_name].revert_one(self._rng))
+        if track_name in self._euclidean_drifts:
+            return bool(self._euclidean_drifts[track_name].revert(self._rng))
+        if track_name in self._param_drifts:
+            return self._param_drifts[track_name].revert_one(self._rng) is not None
+        return False
 
     def _compute_next_mutation_beat(self, from_beat: float, bpm: float) -> float:
         """Вычислить beat следующей мутации.

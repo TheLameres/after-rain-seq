@@ -675,3 +675,76 @@ class TestSyncMutate:
         state = engine.get_state("Pad 1")
         assert state is not None
         assert state.mutation_count == 0
+
+
+class TestMutationCountOnTrack:
+    """§4.4: MutationEngine пишет счётчик в дорожку-владельца."""
+
+    def test_engine_increments_track_counter(self) -> None:
+        """Счётчик на дорожке отражает реальные изменения, а не число тиков."""
+        from src.session.model.melodic_track import MelodicTrack
+
+        track = MelodicTrack(name="Lead 1", profile_name="lead")
+        engine = MutationEngine(rng=random.Random(7))
+        engine.register_track(
+            "Lead 1", "lead", mutate=0.3, bpm=120.0, degrees=[0, 2, 4], track=track
+        )
+        for beat in range(600):
+            engine.tick(beat * 0.5)
+        state = engine.get_state("Lead 1")
+        assert state is not None
+        # Тиков-мутаций больше, чем чистых изменений: деградация вычитает.
+        assert 0 < track.mutation_count < state.mutation_count
+
+    def test_frozen_track_counter_stays_zero(self) -> None:
+        from src.session.model.melodic_track import MelodicTrack
+
+        track = MelodicTrack(name="Pad 1", profile_name="pad")
+        engine = MutationEngine(rng=random.Random(0))
+        engine.register_track(
+            "Pad 1", "pad", mutate=0.5, bpm=120.0, degrees=[0, 2, 4], track=track
+        )
+        track.freeze()
+        engine.sync_mutate("Pad 1", track.mutate)
+        for beat in range(700):
+            engine.tick(beat * 0.5)
+        assert track.mutation_count == 0
+
+
+class TestSyncMutate:
+    """Regression §4.1: track.mutate must reach MutationEngine state."""
+
+    def test_sync_updates_state(self) -> None:
+        engine = MutationEngine(rng=random.Random(0))
+        engine.register_track("Lead 1", "lead", mutate=0.5, degrees=[0, 2, 4])
+        engine.sync_mutate("Lead 1", 0.0)
+        state = engine.get_state("Lead 1")
+        assert state is not None
+        assert state.mutate == 0.0
+
+    def test_sync_keeps_counters(self) -> None:
+        engine = MutationEngine(rng=random.Random(0))
+        engine.register_track("Lead 1", "lead", mutate=0.5, degrees=[0, 2, 4])
+        before = engine.get_state("Lead 1")
+        assert before is not None
+        engine.sync_mutate("Lead 1", 0.2)
+        after = engine.get_state("Lead 1")
+        assert after is not None
+        assert after.mutation_count == before.mutation_count
+        assert after.next_mutation_beat == before.next_mutation_beat
+
+    def test_sync_unknown_track_is_noop(self) -> None:
+        engine = MutationEngine(rng=random.Random(0))
+        engine.sync_mutate("Ghost", 0.0)
+        assert engine.get_state("Ghost") is None
+
+    def test_frozen_track_gets_no_mutations_after_sync(self) -> None:
+        """Plan §2.2 acceptance: freeze → 0 mutations over many ticks."""
+        engine = MutationEngine(rng=random.Random(1))
+        engine.register_track("Pad 1", "pad", mutate=0.5, bpm=118.0, degrees=[0, 2, 4])
+        engine.sync_mutate("Pad 1", 0.0)  # simulate track.freeze()
+        for beat in range(20_000):
+            engine.tick(beat * 0.05)
+        state = engine.get_state("Pad 1")
+        assert state is not None
+        assert state.mutation_count == 0

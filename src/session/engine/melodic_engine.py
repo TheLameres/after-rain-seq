@@ -120,6 +120,10 @@ class MelodicEngine:
             return 0
         self._scheduler.ensure(current_beat)
         self._extend_horizon(current_beat)
+        # §4.6: mute дорожки не даёт звука, но горизонт и планировщик
+        # продолжают идти — снятие mute возвращает дорожку в такт.
+        if self._track.muted:
+            return 0
         count = 0
         for event in self._scheduler.due(current_beat):
             self._enqueue(event)
@@ -181,7 +185,7 @@ class MelodicEngine:
 
         events: list[TransportEvent] = []
         # Обход по циклам (k снаружи) — abs beats неубывают; свинг
-        # (stateful SwingApplier) получает позиции в музыкальном порядке.
+        # без состояния: чётность берётся из abs_beat (§4.2).
         k = max(0, math.floor(start / pattern_len))
         while k * pattern_len < end - 1e-9:
             for note in notes:

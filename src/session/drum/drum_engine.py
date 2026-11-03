@@ -101,6 +101,10 @@ class DrumEngine:
         # Генерация.
         events = self._track.generate()
 
+        # §4.6: mute дорожки не даёт событий, но мутация и генерация идут.
+        if self._track.muted:
+            return 0
+
         # Конвертация и доставка.
         count = 0
         for ev in events:
@@ -135,7 +139,13 @@ class DrumEngine:
         """
         duration = ev.duration
         if self._swing.amount > 0.0:
-            duration = self._swing.apply_duration(base=duration, beat=current_beat)
+            # §4.2: чётность берётся из номера шага паттерна, а не из порядка
+            # вызовов. Сетка ударных — шаг паттерна (1/16 при steps=16),
+            # поэтому соседние шаги чередуются, а одновременные удары разных
+            # лейнов получают одинаковую длительность.
+            step_duration = 4.0 / self._track.steps
+            step_index = round(ev.beat / step_duration)
+            duration = self._swing.apply_step(base=duration, step_index=step_index)
 
         return TransportEvent.note_on(
             port_label=port,

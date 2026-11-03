@@ -292,3 +292,28 @@ def test_freeze_sets_mutate_zero():
     for beat in range(1000, 21000):
         dt.maybe_mutate(current_beat=float(beat))
     assert dt.mutation_count == 0
+
+
+def test_generate_publishes_to_outbox():
+    """§4.5: drum-события попадают в outbox, current()/history() работают."""
+    dt = DrumTrack(name="Drum 1")
+    dt.lanes[0].pattern[0] = 1
+    dt.lanes[0].pattern[8] = 1
+    events = dt.generate()
+    assert len(events) == 2
+    assert len(dt.outbox) == 2
+    assert dt.current() is not None
+    assert dt.current().beat == 2.0
+    assert len(dt.history(1.0)) == 1
+
+
+def test_freeze_sets_mutate_zero():
+    """Regression §4.3: DrumTrack.freeze() must stop mutation, not only reset counter."""
+    dt = DrumTrack(name="Drum 1")
+    dt.mutate = 1.0
+    dt.freeze()
+    assert dt.mutate == 0.0
+    dt.lanes[0].pattern[0] = 1
+    for beat in range(1000, 21000):
+        dt.maybe_mutate(current_beat=float(beat))
+    assert dt.mutation_count == 0
