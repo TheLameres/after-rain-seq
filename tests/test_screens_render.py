@@ -33,7 +33,6 @@ from src.devices.push2.screens import (
     draw_ports,
     draw_scale,
     draw_setup,
-    draw_tab_bar,
     draw_track,
     draw_track_macro,
     draw_tracks,
@@ -375,37 +374,17 @@ class TestDrawPorts:
 # ── Таб-бар / заголовок (chrome) ──────────────────────────────────────────────
 
 
-class TestDrawTabBar:
-    def test_active_cell_white(self) -> None:
-        fb = make_fb()
-        draw_tab_bar(fb, "gen")
-        # GEN — под Clip (x-центр 906): белая заливка ячейки.
-        assert color_count(fb, Colors.WHITE, 850, 2, 110, 18) > 100
-
-    def test_inactive_cells_gray_text(self) -> None:
-        fb = make_fb()
-        draw_tab_bar(fb, "gen")
-        # Подписи неактивных вкладок не белые: PORTS (центр 540) — нет заливки.
-        assert color_count(fb, Colors.WHITE, 485, 2, 110, 18) == 0
-        assert non_bg_count(fb, 485, 2, 110, 18) > 3  # но текст есть
-
-    def test_no_active_when_none(self) -> None:
-        fb = make_fb()
-        draw_tab_bar(fb, None)
-        assert color_count(fb, Colors.WHITE, 0, 0, FRAME_W, 22) == 0
-
-
 class TestChrome:
     def test_header_title(self) -> None:
         fb = make_fb()
         draw_header(fb, "TRACKS 1-8/2", None)
-        # Заголовок под таб-баром: y 22–35.
-        assert non_bg_count(fb, 0, 22, 300, 14) > 10
+        # Заголовок в полосе y 0–13 (шрифт sm).
+        assert non_bg_count(fb, 0, 0, 300, 14) > 10
 
     def test_header_flash_right(self) -> None:
         fb = make_fb()
         draw_header(fb, "TRACKS", "error: cycle")
-        assert color_count(fb, Colors.DISCONNECTED, 500, 22, 460, 14) > 3
+        assert color_count(fb, Colors.DISCONNECTED, FRAME_W - 80, 0, 76, 14) > 3
 
 
 class TestDrawWizard:

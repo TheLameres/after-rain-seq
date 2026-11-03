@@ -17,7 +17,6 @@ def _tracks_view(title: str = "TRACKS 1-8/1") -> ScreenView:
     return ScreenView(
         screen="tracks",
         title=title,
-        tab=None,
         flash=None,
         tracks=(
             TrackRowView(
@@ -38,7 +37,6 @@ def _scale_view() -> ScreenView:
     return ScreenView(
         screen="scale",
         title="SCALE",
-        tab=None,
         flash=None,
         scale=ScaleView(
             roots=("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"),
@@ -101,7 +99,6 @@ def test_tracks_change_dirty_only_body() -> None:
     v2 = ScreenView(
         screen="tracks",
         title=v1.title,
-        tab=v1.tab,
         flash=None,
         tracks=(changed,),
     )
@@ -160,3 +157,15 @@ def test_set_button_leds_sends_cc_per_button() -> None:
 def test_set_button_leds_noop_without_midi_out() -> None:
     device = Push2Device()  # не подключён — _midi_out is None
     device.set_button_leds({"Play": 126})  # не должно бросить
+
+
+def test_demo_tab_change_dirties_body() -> None:
+    """DEMO должен перерисовываться при смене вкладок (view.demo в dirty-регионе)."""
+    from src.devices.display_state import DemoView
+
+    disp = PushDisplay(fps=25)
+    base = dict(screen="demo", title="DEMO", flash=None)
+    disp.update_screen(ScreenView(**base, demo=DemoView(top_tabs=("A", "B"), top_index=0, bottom_tabs=("X",), bottom_index=0, values=(0,) * 6)))
+    disp.render_frame_only()
+    disp.update_screen(ScreenView(**base, demo=DemoView(top_tabs=("A", "B"), top_index=1, bottom_tabs=("X",), bottom_index=0, values=(0,) * 6)))
+    assert "body" in disp._dirty_regions

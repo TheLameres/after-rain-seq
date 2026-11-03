@@ -173,14 +173,11 @@ class ScreenView:
     Атрибуты:
         screen: ``ScreenId.value`` (str — enum в devices не тянем).
         title: «TRACKS 1-8/2», «TRACK: Stab 1», … (под таб-баром).
-        tab: активный таб таб-бара (``ScreenId.value``); None — экран вне
-          табов (TRACKS, WIZARD, SCALE, SETUP, DEMO): таб-бар без активной ячейки.
         flash: transient сообщение (ошибка/BPM по касанию) или None.
     """
 
     screen: str
     title: str
-    tab: str | None
     flash: str | None
     tracks: tuple[TrackRowView, ...] | None = None
     track: TrackDetailView | None = None  # GEN (CLIP)

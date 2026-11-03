@@ -87,3 +87,35 @@ class TestOverflow:
         assert [e.name for e in drained] == ["B2", "B3", "B4"]
         assert q.dropped == 2
         assert any("overflow" in r.message for r in caplog.records)
+
+
+class TestShiftCoalesce:
+    """Overflow: отпускание Shift не теряется (залипший Shift ломал навигацию)."""
+
+    def test_shift_release_survives_overflow(self) -> None:
+        q = UiEventQueue(capacity=3)
+        q.put(UiEvent.button("Shift", True))
+        q.put(UiEvent.encoder("Track1 Encoder", 1))
+        q.put(UiEvent.encoder("Track1 Encoder", 1))
+        # Переполнение: отпускание Shift должно попасть в очередь.
+        q.put(UiEvent.button("Shift", False))
+        drained = list(q.drain())
+        shift_states = [e.value for e in drained if e.name == "Shift"]
+        # Последнее состояние Shift — отпущен; оно не потеряно и не залипло.
+        assert shift_states[-1] == 0
+
+    def test_button_coalesced_by_name_on_overflow(self) -> None:
+        q = UiEventQueue(capacity=2)
+        q.put(UiEvent.button("Play", True))
+        q.put(UiEvent.encoder("Track1 Encoder", 1))
+        q.put(UiEvent.button("Play", False))  # overflow: заменяет старый Play
+        drained = list(q.drain())
+        plays = [e.value for e in drained if e.name == "Play"]
+        assert plays == [0]
+
+    def test_fifo_preserved_without_overflow(self) -> None:
+        q = UiEventQueue(capacity=8)
+        q.put(UiEvent.button("Play", True))
+        q.put(UiEvent.encoder("Track1 Encoder", 1))
+        q.put(UiEvent.button("Play", False))
+        assert [e.name for e in q.drain()] == ["Play", "Track1 Encoder", "Play"]

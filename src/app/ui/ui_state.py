@@ -40,7 +40,6 @@ class UiState:
     """
 
     screen: ScreenId = ScreenId.TRACKS
-    page: int = 0
     selected: int = 0
     flash_text: str | None = None
     flash_deadline: float = 0.0
@@ -55,6 +54,11 @@ class UiState:
     demo_top: int = 0  # DEMO: активная верхняя вкладка (E1)
     demo_bottom: int = 0  # DEMO: активная нижняя вкладка (E2)
     demo_values: tuple[int, ...] = (DEMO_VALUE_DEFAULT,) * DEMO_VALUE_COUNT
+
+    @property
+    def page(self) -> int:
+        """Страница банка дорожек: производная от ``selected`` (только дорожные экраны)."""
+        return self.selected // PAGE_SIZE
 
     def flash(self, text: str, now: float, ttl: float = DEFAULT_FLASH_SECONDS) -> None:
         """Показать transient-сообщение до ``now + ttl`` (не блокирует UI)."""

@@ -22,7 +22,7 @@ from src.devices.push2.renderer import FRAME_W, Colors, FrameBuffer
 
 # Body-геометрия (дублирует screens.py, чтобы виджеты не импортировали
 # слой экранов; это каноническое место определения колонок).
-BODY_Y0 = 36
+BODY_Y0 = 14
 BODY_Y1 = 160
 COL_W = 120  # шаг колонок = шаг энкодеров E1–E8 / Lower Row
 

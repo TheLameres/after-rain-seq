@@ -61,7 +61,6 @@ __all__ = [
     "DEMO_COLS_Y0",
     "DEMO_COLS_Y1",
     "DEMO_TABS_H",
-    "TAB_CELLS",
     "DemoScreen",
     "PortsScreen",
     "ScaleScreen",
@@ -77,23 +76,11 @@ __all__ = [
     "draw_ports",
     "draw_scale",
     "draw_setup",
-    "draw_tab_bar",
     "draw_track",
     "draw_track_macro",
     "draw_tracks",
     "draw_wizard",
 ]
-
-# Ячейки таб-бара: (метка, x-центр). Центры — под физическими кнопками,
-# которыми открывается вкладка (схема MidiMapping.png из спеки Ableton):
-# GEN под Clip (CC 113), MACRO под Device (CC 110), PORTS под Upper Row 5
-# (CC 106). Позиции взяты с картинки спеки, а не выведены из CC: номера CC
-# у Clip/Device лежат вне диапазона Upper Row, поэтому ряд из CC не строится.
-TAB_CELLS: tuple[tuple[str, int], ...] = (
-    ("GEN", 906),
-    ("MACRO", 800),
-    ("PORTS", 540),
-)
 
 # Цвет flash-строки: жёлтый для сообщений, красный — для error:.
 FLASH = Colors.BPM_MIDI  # orange — reuse: заметный, но не крикливый
@@ -553,12 +540,12 @@ DEFAULT_SCREENS: tuple[Screen, ...] = (
 
 
 def _draw_header_bar(fb: FrameBuffer, title: str, flash: str | None) -> None:
-    """y 22–35: заголовок слева (под таб-баром), flash-строка справа."""
-    fb.fill_rect(0, 22, FRAME_W, 14, Colors.BG)
-    Label(title, "md", Colors.WHITE).render(fb, Rect(4, 23, 480, 12))
+    """y 0–13: заголовок слева (шрифт sm), flash-строка справа."""
+    fb.fill_rect(0, 0, FRAME_W, 14, Colors.BG)
+    Label(title, "sm", Colors.WHITE).render(fb, Rect(4, 0, 400, 13))
     if flash:
         color = FLASH_ERROR if flash.startswith("error:") else FLASH
-        Label(flash, "sm", color, "r").render(fb, Rect(400, 25, FRAME_W - 404, 10))
+        Label(flash, "sm", color, "r").render(fb, Rect(FRAME_W - 80, 1, 76, 12))
 
 
 class Screens:
@@ -585,8 +572,7 @@ class Screens:
         return tuple(self._by_name)
 
     def draw_header(self, fb: FrameBuffer, view: ScreenView) -> None:
-        """y 0–35: таб-бар вкладок + заголовок с flash-строкой."""
-        TabStrip(TAB_CELLS, active=view.tab).render(fb, Rect(0, 0, FRAME_W, 22))
+        """y 0–13: заголовок с flash-строкой."""
         _draw_header_bar(fb, view.title, view.flash)
 
     def draw_body(self, fb: FrameBuffer, view: ScreenView) -> None:
@@ -604,11 +590,6 @@ class Screens:
 
 
 # ── Module-level обёртки: прямая отрисовка тел (тесты, spikes) ────────────────
-
-
-def draw_tab_bar(fb: FrameBuffer, active: str | None) -> None:
-    """y 0–21: вкладки под своими кнопками; активная — белой заливкой."""
-    TabStrip(TAB_CELLS, active=active).render(fb, Rect(0, 0, FRAME_W, 22))
 
 
 def draw_header(fb: FrameBuffer, title: str, flash: str | None) -> None:

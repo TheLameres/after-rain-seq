@@ -60,7 +60,7 @@ log = logging.getLogger(__name__)
 
 # Вкладки переключаются выделенными кнопками (Clip/Device) и Upper Row 5
 # (PORTS) — см. ниже. Upper Row освобождён под будущее (D3+).
-PORTS_BUTTON = "Upper Row 5"  # CC 106 — экран PORTS
+PORTS_BUTTON = "Mix"  # CC 112 — экран PORTS (план Ф0.3)
 DEMO_BUTTON = "Note"  # CC 50 — демо-экран фреймворка (вкладки сверху/снизу, 8 энкодеров)
 
 # Выделенные кнопки вне табов (переразметка 02.11.2026).
@@ -149,6 +149,9 @@ _MACRO_AXIS_BY_ENCODER: dict[int, MacroAxis] = {
     2: MacroAxis.DEPTH,
 }
 
+# Экраны, где Left/Right двигают курсор дорожки.
+_TRACK_SCREENS = frozenset({ScreenId.TRACKS, ScreenId.TRACK_GEN, ScreenId.TRACK_MACRO})
+
 # Sender performance-CC: (port_label, param_name, channel, value).
 CcSender = Callable[[str, str, int, int], None]
 
@@ -209,7 +212,6 @@ class ScreenController:
         view = ScreenView(
             screen=screen.value,
             title=title,
-            tab=screen.value if screen in ScreenId.tab_order() else None,
             flash=flash,
         )
         if screen is ScreenId.TRACKS:
@@ -404,7 +406,8 @@ class ScreenController:
             return
         if not 0 <= slot < PAGE_SIZE:
             return
-        self.state.selected = slot
+        # Абсолютный индекс дорожки: страница + позиция на Lower Row.
+        self.state.selected = self.state.page * PAGE_SIZE + slot
         if self.state.delete_armed:
             self.state.delete_armed = False
             track = self._selected_track(snap)
@@ -420,47 +423,28 @@ class ScreenController:
         self.state.screen = screen
 
     def _nav_left(self, snap: StatusSnapshot) -> None:
+        """Left: дорожные экраны — курсор по дорожке (Shift — страница из 8)."""
         screen = self.state.screen
-        if screen is ScreenId.TRACKS:
-            if self.state.page > 0:
-                self.state.page -= 1
-                self.state.selected = 0
-            return  # TRACKS не таб: за левым краем — стоим
-        if screen is ScreenId.TRACK_GEN:
-            self.state.screen = ScreenId.TRACKS  # GEN → назад в TRACKS
-        elif screen is ScreenId.TRACK_MACRO:
-            self.state.screen = ScreenId.TRACK_GEN  # MACRO → GEN
+        if screen in _TRACK_SCREENS:
+            self._move_track(-PAGE_SIZE if self.state.shift else -1, snap)
         elif screen is ScreenId.PORTS:
             self._move_cursor(-1, snap)
-        elif screen in (ScreenId.SCALE, ScreenId.SETUP, ScreenId.WIZARD):
-            pass  # глобальные экраны вне табов: стрелки сюда не ходят
-        elif screen is ScreenId.DEMO:
-            pass  # DEMO вне табов: стрелки заняты вкладками (_demo_nav)
-        else:
-            self._step_screen(-1)
+        # SCALE/SETUP/WIZARD/DEMO: Left обрабатывается в своих ветках или не нужен.
 
     def _nav_right(self, snap: StatusSnapshot) -> None:
+        """Right: дорожные экраны — курсор по дорожке (Shift — страница из 8)."""
         screen = self.state.screen
-        if screen is ScreenId.TRACKS:
-            if (self.state.page + 1) * PAGE_SIZE < len(snap.tracks):
-                self.state.page += 1
-                self.state.selected = 0
-            elif self._selected_track(snap) is not None:
-                self.state.screen = ScreenId.TRACK_GEN  # Right → GEN
-            return  # TRACKS не таб: пустая сессия — стоим
-        if screen is ScreenId.PORTS:
+        if screen in _TRACK_SCREENS:
+            self._move_track(PAGE_SIZE if self.state.shift else 1, snap)
+        elif screen is ScreenId.PORTS:
             self._move_cursor(1, snap)
-        elif screen in (ScreenId.SCALE, ScreenId.SETUP, ScreenId.WIZARD):
-            pass  # глобальные экраны вне табов: стрелки сюда не ходят
-        elif screen is ScreenId.DEMO:
-            pass  # DEMO вне табов: стрелки заняты вкладками (_demo_nav)
-        else:
-            self._step_screen(1)
 
-    def _step_screen(self, delta: int) -> None:
-        order = ScreenId.tab_order()
-        idx = order.index(self.state.screen)
-        self.state.screen = order[(idx + delta) % len(order)]
+    def _move_track(self, delta: int, snap: StatusSnapshot) -> None:
+        """Сдвиг абсолютного курсора дорожки (0..N-1), кламп по длине списка."""
+        total = len(snap.tracks)
+        if total == 0:
+            return
+        self.state.selected = max(0, min(total - 1, self.state.selected + delta))
 
     def _scale_nav(self, name: str, now: float, snap: StatusSnapshot) -> None:
         """SCALE: Left/Right — корень, Up/Down — лад (та же логика, что E1/E2)."""
@@ -549,9 +533,8 @@ class ScreenController:
         self.state.selected = max(0, min(limit - 1, self.state.selected + delta))
 
     def _cursor_limit(self, snap: StatusSnapshot) -> int:
-        if self.state.screen is ScreenId.TRACKS:
-            start = self.state.page * PAGE_SIZE
-            return max(0, min(PAGE_SIZE, len(snap.tracks) - start))
+        if self.state.screen in _TRACK_SCREENS:
+            return len(snap.tracks)
         if self.state.screen is ScreenId.PORTS:
             return len(snap.ports)
         return 0
@@ -815,7 +798,7 @@ class ScreenController:
             "Shift": LED_WHITE if state.shift else LED_DIM,
             DELETE_BUTTON: LED_RED if state.delete_armed else LED_DIM,
         }
-        # Upper Row 5 — PORTS (единственное назначение верхнего ряда;
+        # Mix — PORTS (единственное назначение верхнего ряда;
         # остальные кнопки ряда освобождены под будущее и не подсвечиваются).
         states[PORTS_BUTTON] = LED_WHITE if state.screen is ScreenId.PORTS else LED_GRAY
         states[DEMO_BUTTON] = LED_GREEN if state.screen is ScreenId.DEMO else LED_GRAY
@@ -823,7 +806,7 @@ class ScreenController:
         for i in range(PAGE_SIZE):
             if start + i < len(snap.tracks):
                 states[f"Lower Row {i + 1}"] = (
-                    LED_GREEN if i == state.selected else LED_WHITE
+                    LED_GREEN if i == state.selected % PAGE_SIZE else LED_WHITE
                 )
         if state.screen is ScreenId.WIZARD:
             states["Add Track"] = LED_GREEN  # в wizard — подтверждение шага
@@ -839,7 +822,7 @@ class ScreenController:
             self.state.flash(feedback, now, self._flash_seconds)
 
     def _selected_track(self, snap: StatusSnapshot) -> TrackSummary | None:
-        idx = self.state.page * PAGE_SIZE + self.state.selected
+        idx = self.state.selected
         return snap.tracks[idx] if 0 <= idx < len(snap.tracks) else None
 
     def _route_track(self, snap: StatusSnapshot) -> TrackSummary | None:
@@ -890,14 +873,15 @@ class ScreenController:
                 port=t.port,
                 frozen=t.frozen,
                 mutation_count=t.mutation_count,
-                selected=i == self.state.selected,
+                selected=i == self.state.selected % PAGE_SIZE,
                 color=track_color(start + i),  # свой цвет у каждой дорожки
             )
             for i, t in enumerate(page)
         )
         # Пустые слоты страницы — до PAGE_SIZE строк (курсор виден на пустой).
-        if len(rows) < PAGE_SIZE and self.state.selected >= len(rows):
-            pad = self.state.selected - len(rows) + 1
+        sel = self.state.selected % PAGE_SIZE
+        if len(rows) < PAGE_SIZE and sel >= len(rows):
+            pad = sel - len(rows) + 1
             rows += tuple(
                 TrackRowView(
                     name="—",
@@ -915,7 +899,7 @@ class ScreenController:
 
     def _track_color_for_selection(self) -> int:
         """Цвет выбранной дорожки (по абсолютному индексу в сессии)."""
-        return track_color(self.state.page * PAGE_SIZE + self.state.selected)
+        return track_color(self.state.selected)
 
     def _track_detail(self, snap: StatusSnapshot) -> TrackDetailView | None:
         track = self._selected_track(snap)

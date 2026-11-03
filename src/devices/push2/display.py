@@ -39,9 +39,9 @@ if TYPE_CHECKING:
     from src.devices.push2.push2_display import Push2UsbDisplay
 
 # Region rectangles: (x, y, w, h)
-# Header = таб-бар (0–21) + заголовок под ним (22–35) — см. screens.py.
+# Header = полоса 0–13 (заголовок + flash, шрифт sm) — см. screens.py.
 # Нижнего статус-бара нет (D2-5): body занимает всё до нижнего края.
-_RECT_HEADER = (0, 0, FRAME_W, 36)
+_RECT_HEADER = (0, 0, FRAME_W, 14)
 
 # Send a keepalive frame after this much silence — the display blanks after
 # 2 s without a complete frame (Ableton Push 2 Interface Manual, Frame Buffering).
@@ -213,7 +213,7 @@ class PushDisplay:
         Must be called under self._lock.
         """
         checks: dict[str, object] = {
-            "header": (view.tab, view.title, view.flash),
+            "header": (view.title, view.flash),
             "body": (
                 view.tracks,
                 view.track,
@@ -222,6 +222,7 @@ class PushDisplay:
                 view.ports,
                 view.scale,
                 view.wizard,
+                view.demo,
             ),
         }
         for name, key in checks.items():
@@ -270,9 +271,9 @@ class PushDisplay:
     # ------------------------------------------------------------------
 
     def _draw_header(self) -> None:
-        """y 0-23: application title + connection dot."""
+        """y 0-13: application title + connection dot."""
         fb = self._fb
         fb.fill_rect(*_RECT_HEADER, Colors.BG)
-        fb.text(4, 4, _APP_TITLE, "lg", Colors.GRAY)
+        fb.text(4, 0, _APP_TITLE, "sm", Colors.GRAY)
         dot_color = Colors.CONNECTED if self._push2_ok else Colors.DISCONNECTED
-        fb.fill_rect(FRAME_W - 14, 8, 8, 8, dot_color)
+        fb.fill_rect(FRAME_W - 14, 3, 8, 8, dot_color)

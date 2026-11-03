@@ -14,7 +14,6 @@ from src.devices.push2.display import _FONTS
 from src.devices.push2.renderer import FRAME_W, Colors, FrameBuffer
 from src.devices.push2.screens import (
     DEFAULT_SCREENS,
-    TAB_CELLS,
     Screen,
     Screens,
 )
@@ -27,7 +26,6 @@ from src.devices.push2.widgets import (
     Label,
     Marker,
     Rect,
-    TabStrip,
 )
 
 
@@ -167,26 +165,6 @@ class TestColumnGrid:
         assert (grid.rect(3).y, grid.rect(3).h) == (100, 20)
 
 
-# ── TabStrip ──────────────────────────────────────────────────────────────────
-
-
-class TestTabStrip:
-    def test_active_cell_white(self) -> None:
-        fb = make_fb()
-        TabStrip(TAB_CELLS, active="gen").render(fb, Rect(0, 0, FRAME_W, 22))
-        # Активная ячейка GEN: белая заливка (инверсия текста).
-        gen_cx = dict(TAB_CELLS)["GEN"]
-        assert color_count(fb, Colors.WHITE, gen_cx - 50, 2, 100, 18) > 100
-        # Неактивная PORTS: белой заливки нет.
-        ports_cx = dict(TAB_CELLS)["PORTS"]
-        assert color_count(fb, Colors.WHITE, ports_cx - 50, 2, 100, 18) == 0
-
-    def test_no_active_all_passive(self) -> None:
-        fb = make_fb()
-        TabStrip(TAB_CELLS, active=None).render(fb, Rect(0, 0, FRAME_W, 22))
-        assert color_count(fb, Colors.WHITE, 0, 0, FRAME_W, 22) == 0
-
-
 # ── Screens: реестр и композитор ──────────────────────────────────────────────
 
 
@@ -226,7 +204,7 @@ class TestScreens:
         screens.register(CustomScreen())
         assert "custom" in screens.names()
 
-        view = ScreenView(screen="custom", title="CUSTOM", tab=None, flash=None)
+        view = ScreenView(screen="custom", title="CUSTOM", flash=None)
         fb = make_fb()
         screens.draw_body(fb, view)
         assert non_bg_count(fb, 4, 40, 200, 18) > 5
@@ -239,7 +217,7 @@ class TestScreens:
     def test_unknown_screen_clears_body(self) -> None:
         """Неизвестный view.screen — body заливается фоном, без падения."""
         screens = Screens()
-        view = ScreenView(screen="nope", title="?", tab=None, flash=None)
+        view = ScreenView(screen="nope", title="?", flash=None)
         fb = make_fb()
         fb.fill_rect(0, 40, 50, 50, Colors.WHITE)  # «мусор» в body
         screens.draw_body(fb, view)
@@ -248,7 +226,7 @@ class TestScreens:
     def test_screen_view_none_body_clears(self) -> None:
         """DTO тела None (например track=None) — body очищается фоном."""
         screens = Screens()
-        view = ScreenView(screen="gen", title="GEN", tab="gen", flash=None)
+        view = ScreenView(screen="gen", title="GEN", flash=None)
         fb = make_fb()
         fb.fill_rect(0, 40, 50, 50, Colors.WHITE)
         screens.draw_body(fb, view)
@@ -256,11 +234,11 @@ class TestScreens:
 
     def test_draw_header_renders_title_and_flash(self) -> None:
         screens = Screens()
-        view = ScreenView(screen="tracks", title="TRACKS", tab=None, flash="error: x")
+        view = ScreenView(screen="tracks", title="TRACKS", flash="error: x")
         fb = make_fb()
         screens.draw_header(fb, view)
-        assert non_bg_count(fb, 4, 23, 300, 12) > 5  # заголовок
-        assert color_count(fb, Colors.DISCONNECTED, 400, 25, 556, 10) > 3  # error:
+        assert non_bg_count(fb, 4, 0, 300, 13) > 5  # заголовок (y 0–13)
+        assert color_count(fb, Colors.DISCONNECTED, FRAME_W - 80, 1, 76, 12) > 3  # error:
 
     def test_draw_full_frame(self) -> None:
         """draw() = header + body целиком (спайки/эмулятор)."""
@@ -277,7 +255,7 @@ class TestScreens:
             color=Colors.CONNECTED,
         )
         view = ScreenView(
-            screen="tracks", title="TRACKS 1-8/1", tab=None, flash=None, tracks=(row,)
+            screen="tracks", title="TRACKS 1-8/1", flash=None, tracks=(row,)
         )
         fb = make_fb()
         screens.draw(fb, view)

@@ -200,7 +200,7 @@ def main() -> int:
         print("\n[ui] Сценарий 2: GEN (E4 DEN), MACRO (E1 TONE)")
         for _ in range(PAGE_SIZE):  # курсор вниз → кламп к Stab 1
             btn("Down")
-        btn("Right")  # → GEN выбранной (Stab 1)
+        btn("Clip")  # → GEN выбранной (Stab 1)
         pump()
         v = view()
         chk.check(v.screen == "gen", "экран GEN")
@@ -255,7 +255,7 @@ def main() -> int:
 
         # ── Сценарий 3: PORTS — назначить порт ──────────────────────────
         print("\n[ui] Сценарий 3: PORTS, назначение main")
-        btn("Upper Row 5")
+        btn("Mix")
         pump()
         v = view()
         chk.check(v.screen == "ports", "экран PORTS")

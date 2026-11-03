@@ -33,12 +33,3 @@ class ScreenId(Enum):
     PORTS = "ports"  # таб под Upper Row 5 (CC 106)
     WIZARD = "wizard"  # модальный — не таб
     DEMO = "demo"  # демо фреймворка — NOTE (CC 50); не таб
-
-    @classmethod
-    def tab_order(cls) -> tuple[ScreenId, ...]:
-        """Порядок дорожных табов в верхнем ряду дисплея."""
-        return (
-            cls.TRACK_GEN,
-            cls.TRACK_MACRO,
-            cls.PORTS,
-        )

@@ -192,26 +192,33 @@ class TestNavigation:
         assert ctl.state.screen is ScreenId.TRACK_GEN
         btn(ctl, "Device")
         assert ctl.state.screen is ScreenId.TRACK_MACRO
-        btn(ctl, "Upper Row 5")
+        btn(ctl, "Mix")
         assert ctl.state.screen is ScreenId.PORTS
 
-    def test_page_left_right_and_clamp(self) -> None:
+    def test_left_right_move_one_track_and_clamp(self) -> None:
+        """Left/Right: курсор дорожки ±1, кламп по длине списка (без Shift)."""
         tracks = tuple(make_track(f"T{i}") for i in range(10))
         ctl, _, _ = make_controller(tracks)
+        assert ctl.state.selected == 0
         assert ctl.state.page == 0
         btn(ctl, "Right")
-        assert ctl.state.page == 1
-        # Вторая Right на последней странице → вход в GEN выбранной.
-        btn(ctl, "Right")
-        assert ctl.state.screen is ScreenId.TRACK_GEN
-        btn(ctl, "Left")  # назад на TRACKS (страница сохранилась)
-        assert ctl.state.screen is ScreenId.TRACKS
-        assert ctl.state.page == 1
+        assert ctl.state.selected == 1
+        assert ctl.state.page == 0
         btn(ctl, "Left")
-        assert ctl.state.page == 0
-        btn(ctl, "Left")  # TRACKS не таб: за левым краем — стоим
-        assert ctl.state.page == 0
-        assert ctl.state.screen is ScreenId.TRACKS
+        btn(ctl, "Left")  # клампа слева
+        assert ctl.state.selected == 0
+
+    def test_shift_left_right_move_one_page(self) -> None:
+        """Shift + Left/Right: курсор ±PAGE_SIZE (переход на другую страницу)."""
+        tracks = tuple(make_track(f"T{i}") for i in range(10))
+        ctl, _, _ = make_controller(tracks)
+        ctl.handle(UiEvent.button("Shift", True), NOW)
+        btn(ctl, "Right")
+        assert ctl.state.selected == 8
+        assert ctl.state.page == 1
+        btn(ctl, "Right")  # клампа по len=10 → 9
+        assert ctl.state.selected == 9
+        ctl.handle(UiEvent.button("Shift", False), NOW)
 
     def test_cursor_up_down_clamp(self) -> None:
         tracks = (make_track("A"), make_track("B"))
@@ -226,13 +233,14 @@ class TestNavigation:
         btn(ctl, "Up")  # кламп
         assert ctl.state.selected == 0
 
-    def test_right_enters_track_screen(self) -> None:
+    def test_right_stays_on_tracks_and_clip_enters_gen(self) -> None:
+        """Right не входит в GEN (это Clip); Right на TRACKS — курсор, не экран."""
         tracks = (make_track("A"),)
         ctl, _, _ = make_controller(tracks)
         btn(ctl, "Right")
-        assert ctl.state.screen is ScreenId.TRACK_GEN
-        btn(ctl, "Left")
         assert ctl.state.screen is ScreenId.TRACKS
+        btn(ctl, "Clip")
+        assert ctl.state.screen is ScreenId.TRACK_GEN
 
     def test_session_opens_tracks(self) -> None:
         """Session (CC 51) — экран TRACKS (не таб Upper Row)."""
@@ -250,9 +258,10 @@ class TestNavigation:
         assert ctl.state.screen is ScreenId.TRACK_GEN
         btn(ctl, "Device")
         assert ctl.state.screen is ScreenId.TRACK_MACRO
-        btn(ctl, "Left")  # MACRO → GEN
-        assert ctl.state.screen is ScreenId.TRACK_GEN
-        btn(ctl, "Left")  # GEN → TRACKS
+        btn(ctl, "Left")  # на дорожных экранах Left двигает дорожку, экран не меняет
+        assert ctl.state.screen is ScreenId.TRACK_MACRO
+        assert ctl.state.selected == 0
+        btn(ctl, "Session")  # выход с GEN/MACRO — только Session
         assert ctl.state.screen is ScreenId.TRACKS
 
     def test_lower_row_selects_track_and_opens_gen(self) -> None:
@@ -272,26 +281,14 @@ class TestNavigation:
         assert ctl.state.selected == 4
         assert ctl.state.screen is ScreenId.TRACKS
 
-    def test_tabs_step_gen_macro(self) -> None:
-        """Right/Left между табами: GEN → MACRO → PORTS → GEN (кольцо).
-        SCALE/SETUP — глобальные экраны вне табов: стрелки на них не ходят."""
-        ctl, engine, _ = make_controller()
+    def test_gen_right_moves_track_not_tab(self) -> None:
+        """На GEN Right двигает курсор дорожки; переключения табов по кольцу нет."""
+        ctl, engine, _ = make_controller((make_track("A"), make_track("B")))
         btn(ctl, "Clip")  # GEN
         assert ctl.state.screen is ScreenId.TRACK_GEN
         btn(ctl, "Right")
-        assert ctl.state.screen is ScreenId.TRACK_MACRO
-        btn(ctl, "Right")
-        assert ctl.state.screen is ScreenId.PORTS
-        btn(ctl, "Right")  # PORTS: Right ходит по списку портов, не по табам
-        assert ctl.state.screen is ScreenId.PORTS
-        assert ctl.state.selected == 1  # курсор сдвинулся
-        btn(ctl, "Setup")
-        btn(ctl, "Left")  # SETUP вне табов — стоим
-        assert ctl.state.screen is ScreenId.SETUP
-        btn(ctl, "Scale")
-        btn(ctl, "Right")  # SCALE Right крутит корень, не таб
-        assert engine.called("set_root") == [("A#",)]
-        assert ctl.state.screen is ScreenId.SCALE
+        assert ctl.state.screen is ScreenId.TRACK_GEN
+        assert ctl.state.selected == 1
 
     def test_scale_and_setup_buttons(self) -> None:
         """Scale (CC 58) → SCALE, Setup (CC 30) → SETUP."""
@@ -499,7 +496,7 @@ class TestButtons:
         tracks = (make_track("A"), make_track("B"))
         ctl, engine, _ = make_controller(tracks)
         btn(ctl, "Down")
-        btn(ctl, "Right")  # TRACK выбранной (B)
+        btn(ctl, "Clip")  # GEN выбранной (B)
         btn(ctl, "Record")
         assert engine.called("freeze") == [("B",)]
 
@@ -507,7 +504,7 @@ class TestButtons:
         ctl, engine, _ = make_controller()
         btn(ctl, "Browse")
         assert engine.called("rescan_ports") == []
-        btn(ctl, "Upper Row 5")  # PORTS
+        btn(ctl, "Mix")  # PORTS
         btn(ctl, "Browse")
         assert engine.called("rescan_ports") == [()]
 
@@ -525,7 +522,7 @@ class TestEncoders:
     def test_track_gate_encoder(self) -> None:
         tracks = (make_track("A", gate=0.9),)
         ctl, engine, _ = make_controller(tracks)
-        btn(ctl, "Right")  # TRACK
+        btn(ctl, "Clip")  # GEN выбранной дорожки (A)
         enc(ctl, 3, inc=-2)
         assert engine.called("set_track_gate") == [("A", 0.9 - 2 * 0.05)]
 
@@ -534,7 +531,7 @@ class TestEncoders:
             make_track("A", profile="stab", density=1.0, density_applicable=True),
         )
         ctl, engine, _ = make_controller(tracks)
-        btn(ctl, "Right")
+        btn(ctl, "Clip")
         enc(ctl, 4, inc=-127)  # кламп в 0.0 произойдёт в фасаде
         name, value = engine.called("set_track_density")[0]
         assert name == "A"
@@ -543,14 +540,14 @@ class TestEncoders:
     def test_den_not_applicable_ignored(self) -> None:
         tracks = (make_track("A", profile="pad", density_applicable=False),)
         ctl, engine, _ = make_controller(tracks)
-        btn(ctl, "Right")
+        btn(ctl, "Clip")
         enc(ctl, 4)
         assert engine.called("set_track_density") == []
 
     def test_track_mut_encoder(self) -> None:
         tracks = (make_track("A", mutate=0.5),)
         ctl, engine, _ = make_controller(tracks)
-        btn(ctl, "Right")
+        btn(ctl, "Clip")
         enc(ctl, 5, inc=10)
         assert engine.called("set_track_mutate")[0][0] == "A"
 
@@ -594,7 +591,7 @@ class TestEncoders:
     def test_ports_encoders_route(self) -> None:
         tracks = (make_track("A"), make_track("B"))
         ctl, engine, _ = make_controller(tracks)
-        btn(ctl, "Upper Row 5")  # PORTS
+        btn(ctl, "Mix")  # PORTS
         enc(ctl, 1)  # route track A -> B
         assert ctl.state.ports_route_track == "B"
         # У B порт «Синт A» (pos=1): +1 → «Синт B», -1 → None (unroute).
@@ -647,7 +644,7 @@ class TestSourceCycle:
         tracks = (make_track("A"), make_track("B"))
         ctl, engine, _ = make_controller(tracks)
         btn(ctl, "Down")  # выбрана B
-        btn(ctl, "Right")  # TRACK
+        btn(ctl, "Clip")  # GEN
         enc(ctl, 1)  # SRC: none -> A
         assert engine.called("set_track_sources") == [("B", "A")]
         # Повторный поворот при текущих sources=("A",) → none (цикл замкнулся).
@@ -655,7 +652,7 @@ class TestSourceCycle:
             (make_track("A"), make_track("B", sources=("A",)))
         )
         btn(ctl2, "Down")
-        btn(ctl2, "Right")
+        btn(ctl2, "Clip")
         enc(ctl2, 1)
         assert engine2.called("set_track_sources") == [("B",)]
 
@@ -668,7 +665,7 @@ class TestSourceCycle:
         ctl, engine, _ = make_controller(tracks)
         btn(ctl, "Down")
         btn(ctl, "Down")  # C
-        btn(ctl, "Right")
+        btn(ctl, "Clip")
         enc(ctl, 2)  # SRC2: none -> B (A уже занят в SRC)
         assert engine.called("set_track_sources") == [("C", "A", "B")]
 
@@ -782,14 +779,14 @@ class TestButtonLeds:
         states = ctl.button_led_states(engine.get_status())
         # TRACKS — не таб: PORTS (Upper Row 5) тусклая; прочие Upper Row
         # не подсвечиваются (освобождены под будущее, D2-4).
-        assert states["Upper Row 5"] == LED_GRAY
+        assert states["Mix"] == LED_GRAY
         assert "Upper Row 1" not in states
-        btn(ctl, "Upper Row 5")  # PORTS активный таб
+        btn(ctl, "Mix")  # PORTS активный таб
         states = ctl.button_led_states(engine.get_status())
-        assert states["Upper Row 5"] == LED_WHITE
+        assert states["Mix"] == LED_WHITE
         btn(ctl, "Clip")  # GEN — PORTS снова тусклая
         states = ctl.button_led_states(engine.get_status())
-        assert states["Upper Row 5"] == LED_GRAY
+        assert states["Mix"] == LED_GRAY
 
 
 # ── Flash и view ──────────────────────────────────────────────────────────────
@@ -815,7 +812,9 @@ class TestFlashAndView:
     def test_build_view_tracks_page_title(self) -> None:
         tracks = tuple(make_track(f"T{i}") for i in range(10))
         ctl, engine, _ = make_controller(tracks)
-        btn(ctl, "Right")  # page 1
+        ctl.handle(UiEvent.button("Shift", True), NOW)
+        btn(ctl, "Right")  # страница 2 (Shift + Right = PAGE_SIZE)
+        ctl.handle(UiEvent.button("Shift", False), NOW)
         view = ctl.build_view(engine.get_status(), NOW)
         assert view.screen == "tracks"
         assert view.title == "TRACKS 9-16/2"  # метка страницы по размеру банка
@@ -826,7 +825,7 @@ class TestFlashAndView:
     def test_build_view_track_detail(self) -> None:
         tracks = (make_track("A", profile="stab", density_applicable=True),)
         ctl, engine, _ = make_controller(tracks)
-        btn(ctl, "Right")
+        btn(ctl, "Clip")  # GEN выбранной дорожки
         view = ctl.build_view(engine.get_status(), NOW)
         assert view.track is not None
         assert view.track.density == 1.0
@@ -859,7 +858,7 @@ class TestFlashAndView:
 
     def test_build_view_ports(self) -> None:
         ctl, engine, _ = make_controller((make_track("A"),))
-        btn(ctl, "Upper Row 5")
+        btn(ctl, "Mix")
         view = ctl.build_view(engine.get_status(), NOW)
         assert view.ports is not None
         assert len(view.ports.rows) == 2
@@ -873,8 +872,8 @@ class TestFlashAndView:
 class TestSpikeRegressions:
     """Дефекты, найденные E2E-spike (план D2 §5, сценарии 2 и 6)."""
 
-    def test_right_opens_selected_track_not_first(self) -> None:
-        """Курсор переживает вход в TRACK: Right открывает ВЫБРАННУЮ дорожку.
+    def test_clip_opens_selected_track_not_first(self) -> None:
+        """Курсор переживает вход в TRACK: Clip открывает ВЫБРАННУЮ дорожку.
 
         Баг: _clamp_cursor обнулял курсор на экранах без курсора
         (_cursor_limit → 0), и TRACK всегда открывал дорожку 0.
@@ -884,7 +883,7 @@ class TestSpikeRegressions:
         btn(ctl, "Down")
         btn(ctl, "Down")
         assert ctl.state.selected == 2
-        btn(ctl, "Right")
+        btn(ctl, "Clip")
         assert ctl.state.screen is ScreenId.TRACK_GEN
         view = ctl.build_view(engine.get_status(), NOW)
         assert view.track is not None
@@ -957,7 +956,6 @@ class TestDemoScreen:
         btn(ctl, "Note")
         view = ctl.build_view(ctl._engine.get_status(), NOW)
         assert view.screen == "demo"
-        assert view.tab is None  # DEMO вне табов
         assert view.demo is not None
         assert len(view.demo.values) == 6
 

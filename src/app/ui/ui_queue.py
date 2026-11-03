@@ -39,16 +39,48 @@ class UiEventQueue:
         """Счётчик выброшенных при переполнении событий (для тестов/метрик)."""
 
     def put(self, event: UiEvent) -> None:
-        """Положить событие в очередь (поток MIDI-колбэка)."""
+        """Положить событие в очередь (поток MIDI-колбэка).
+
+        Без переполнения — строгий FIFO. При переполнении:
+
+        * кнопочное событие коалесцируется по имени: более раннее событие
+          той же кнопки удаляется, новое встаёт в конец (последнее состояние
+          побеждает; отпускание Shift не может потеряться);
+        * иначе выбрасывается самый старый энкодерный шаг; кнопочные события
+          не выбрасываются, потому что потерянное отпускание Shift оставляет
+          модификатор залипшим (Left/Right листают по 8 дорожек).
+        """
         with self._lock:
-            if len(self._items) >= self._capacity:
-                dropped = self._items.popleft()
-                self.dropped += 1
-                log.warning(
-                    "UiEventQueue overflow (%d pending) — dropped oldest: %s",
-                    self._capacity,
-                    dropped,
+            if len(self._items) < self._capacity:
+                self._items.append(event)
+                return
+            self.dropped += 1
+            if event.kind == "button":
+                for i, queued in enumerate(self._items):
+                    if queued.kind == "button" and queued.name == event.name:
+                        del self._items[i]
+                        log.warning(
+                            "UiEventQueue overflow (%d pending) — coalesced button %s",
+                            self._capacity,
+                            event.name,
+                        )
+                        self._items.append(event)
+                        return
+            victim = next((i for i, e in enumerate(self._items) if e.kind == "encoder"), None)
+            if victim is None:
+                # Нет энкодеров — выбрасываем самую старую кнопку, но не Shift:
+                # его отпускание удерживает модификатор.
+                victim = next(
+                    (i for i, e in enumerate(self._items) if e.name != "Shift"),
+                    0,
                 )
+            dropped = self._items[victim]
+            del self._items[victim]
+            log.warning(
+                "UiEventQueue overflow (%d pending) — dropped: %s",
+                self._capacity,
+                dropped,
+            )
             self._items.append(event)
 
     def drain(self) -> Iterator[UiEvent]:

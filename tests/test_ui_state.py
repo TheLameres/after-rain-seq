@@ -89,15 +89,6 @@ class TestScreenId:
         assert ScreenId.PORTS.value == "ports"
         assert ScreenId.WIZARD.value == "wizard"
 
-    def test_tab_order_three_screens(self) -> None:
-        """Табы дорожки: GEN → MACRO → PORTS (кольцо Right/Left)."""
-        order = ScreenId.tab_order()
-        assert len(order) == 3
-        assert order[0] is ScreenId.TRACK_GEN
-        assert order[1] is ScreenId.TRACK_MACRO
-        assert order[2] is ScreenId.PORTS
-        # Глобальные экраны и модалки — вне табов.
-        assert ScreenId.TRACKS not in order
-        assert ScreenId.SCALE not in order
-        assert ScreenId.SETUP not in order
-        assert ScreenId.WIZARD not in order
+    def test_no_tab_order(self) -> None:
+        """Таб-бар удалён: ScreenId.tab_order больше не существует."""
+        assert not hasattr(ScreenId, "tab_order")
