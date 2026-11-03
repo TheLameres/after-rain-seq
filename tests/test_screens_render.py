@@ -20,14 +20,11 @@ from src.devices.display_state import (
     WizardView,
 )
 from src.devices.push2.display import _FONTS
+from src.devices.push2.layout import FOOT_BAND, KNOBS_BAND, LOWER_BAND, UPPER_BAND
 from src.devices.push2.renderer import FRAME_W, Colors, FrameBuffer
 from src.devices.push2.screens import (
     BODY_Y0,
     BODY_Y1,
-    COL_W,
-    DEMO_BOTTOM_H,
-    DEMO_COLS_Y0,
-    DEMO_TABS_H,
     draw_demo,
     draw_header,
     draw_ports,
@@ -179,11 +176,11 @@ class TestDrawTracks:
         assert non_bg_count(fb, 0, BODY_Y0, fb.width, 100) == 0
 
     def test_bottom_names_under_lower_row(self) -> None:
-        """Внизу body — имена дорожек по колонкам под кнопками Lower Row."""
+        """Имена дорожек — в полосе LOWER, по колонкам под кнопками Lower Row."""
         fb = make_fb()
         rows = track_rows(3)
         draw_tracks(fb, rows)
-        y = BODY_Y1 - 15
+        y = LOWER_BAND.y0 + 2
         for i, row in enumerate(rows):
             # Цветной маркер колонки i + не-фоновые пиксели имени.
             assert color_count(fb, row.color, i * 120 + 4, y + 2, 8, 8) > 10
@@ -193,7 +190,7 @@ class TestDrawTracks:
         """Пустой слот (rows короче 8) — тире в колонке, маркера цвета нет."""
         fb = make_fb()
         draw_tracks(fb, track_rows(2))
-        y = BODY_Y1 - 15
+        y = LOWER_BAND.y0 + 2
         col_x = 2 * 120
         # Тире нарисовано (не-фон в позиции текста колонки 2).
         assert non_bg_count(fb, col_x + 8, y, 12, 12) > 0
@@ -303,46 +300,92 @@ class TestDrawScale:
         draw_scale(fb, scale_view())
         assert non_bg_count(fb, 0, BODY_Y0, fb.width, BODY_Y1 - BODY_Y0) > 100
 
-    def test_active_root_white_cell(self) -> None:
-        """Выбранный корень — белой заливкой (инверсия)."""
-        fb = make_fb()
-        draw_scale(fb, scale_view(root_index=0))
-        # Ячейка корня C: x 9..83, y BODY_Y0..+16 — есть белые пиксели.
-        assert color_count(fb, Colors.WHITE, 9, BODY_Y0, 74, 16) > 30
-
-    def test_active_scale_boxed(self) -> None:
-        fb = make_fb()
-        draw_scale(fb, scale_view(scale_index=0))  # major — ячейка (0,0)
-        # Рамка активного лада — белые пиксели вокруг текста.
-        assert color_count(fb, Colors.WHITE, 8, BODY_Y0 + 22, 220, 20) > 10
-
-    def test_no_swing_panel(self) -> None:
-        """Свинга на экране нет (D2-6): под E3 (x 240–360) только фон.
-
-        Раньше там была колонка SWING (E3) с баром — теперь значение
-        показывается по касанию Swing Encoder (flash-строка).
-        """
+    def test_roots_in_upper_and_lower_rows(self) -> None:
+        """Корни обрамляют сетку ладов: 6 сверху, 6 снизу (эталон Scale Push 2)."""
         fb = make_fb()
         draw_scale(fb, scale_view())
-        assert non_bg_count(fb, 240, BODY_Y0 + 40, 120, 24) == 0
+        for slot in range(6):
+            assert non_bg_count(fb, slot * SLOT_W, UPPER_BAND.y0, SLOT_W, UPPER_BAND.h) > 5
+            assert non_bg_count(fb, slot * SLOT_W, LOWER_BAND.y0, SLOT_W, LOWER_BAND.h) > 5
+        # Слоты 7–8 рядов не назначены.
+        assert non_bg_count(fb, 6 * SLOT_W, UPPER_BAND.y0, 2 * SLOT_W, UPPER_BAND.h) == 0
+        assert non_bg_count(fb, 6 * SLOT_W, LOWER_BAND.y0, 2 * SLOT_W, LOWER_BAND.h) == 0
+
+    def test_quint_circle_order(self) -> None:
+        """Сверху — восходящие квинты (C G D A E B), снизу — от F."""
+        from src.devices.push2.screens import scale_root_rows
+
+        roots = scale_view().roots
+        top, bottom = scale_root_rows(roots)
+        assert top == ("C", "G", "D", "A", "E", "B")
+        assert bottom == ("F", "A#", "D#", "G#", "C#", "F#")
+
+    def test_active_root_filled_white(self) -> None:
+        """Выбранная тоника — белая заливка кнопки своего слота."""
+        fb = make_fb()
+        draw_scale(fb, scale_view(root_index=7))  # G — слот 2 верхнего ряда
+        active = color_count(fb, Colors.WHITE, SLOT_W, UPPER_BAND.y0, SLOT_W, UPPER_BAND.h)
+        plain = color_count(fb, Colors.WHITE, 0, UPPER_BAND.y0, SLOT_W, UPPER_BAND.h)
+        assert active > 50
+        assert active > 30 * plain
+
+    def test_scales_one_per_slot(self) -> None:
+        """Лады — по одному на слот KNOBS (8 ладов = 8 слотов)."""
+        fb = make_fb()
+        draw_scale(fb, scale_view())
+        for slot in range(len(scale_view().scales)):
+            assert non_bg_count(fb, slot * SLOT_W, KNOBS_BAND.y0, SLOT_W, KNOBS_BAND.h) > 5
+
+    def test_active_scale_filled_white(self) -> None:
+        """Активный лад — белая заливка строки, соседи — только текст."""
+        fb = make_fb()
+        draw_scale(fb, scale_view(scale_index=1))  # dorian — слот 1
+        active = color_count(fb, Colors.WHITE, SLOT_W, KNOBS_BAND.y0, SLOT_W, KNOBS_BAND.h)
+        plain = color_count(fb, Colors.WHITE, 0, KNOBS_BAND.y0, SLOT_W, KNOBS_BAND.h)
+        assert active > 500
+        assert plain < active / 10
+
+    def test_foot_shows_key_and_scale(self) -> None:
+        """FOOT: текущая пара KEY/SCALE — в слотах 0 и 1."""
+        fb = make_fb()
+        draw_scale(fb, scale_view())
+        assert non_bg_count(fb, 0, FOOT_BAND.y0, SLOT_W, FOOT_BAND.h) > 5
+        assert non_bg_count(fb, SLOT_W, FOOT_BAND.y0, SLOT_W, FOOT_BAND.h) > 5
+
+    def test_no_dead_placeholders(self) -> None:
+        """Никаких заглушек LAYOUT/DIRECTION: пустые слоты 2–7 FOOT не рисуются."""
+        fb = make_fb()
+        draw_scale(fb, scale_view())
+        assert non_bg_count(fb, 2 * SLOT_W, FOOT_BAND.y0, 6 * SLOT_W, FOOT_BAND.h) == 0
+
+    def test_no_swing_panel(self) -> None:
+        """Свинга на экране нет (D2-6): значение — по касанию Swing Encoder."""
+        fb = make_fb()
+        draw_scale(fb, scale_view())
+        # Ни один слот не назван SWING — проверяем, что слоты ладов не содержат баров под значением.
+        assert color_count(fb, Colors.TRACK_FILL, 0, KNOBS_BAND.y0, FRAME_W, KNOBS_BAND.h) == 0
 
 
 class TestDrawSetup:
     def test_active_source_marked(self) -> None:
+        """Активный источник клока — курсор списка E1 (слот 0, полоса KNOBS)."""
         fb = make_fb()
         draw_setup(fb, sync_view(source="link", link_active=True, link_peers=2))
-        # Маркер активного source зелёный, неприменённые — DIM.
-        assert color_count(fb, Colors.CONNECTED, 60, BODY_Y0, 400, 14) > 0
+        assert color_count(fb, Colors.BPM_LINK, 0, KNOBS_BAND.y0, SLOT_W, KNOBS_BAND.h) > 0
 
     def test_pending_shown(self) -> None:
         fb = make_fb()
         draw_setup(fb, sync_view(source="internal", pending="link"))
-        assert non_bg_count(fb, 300, BODY_Y0, 500, 14) > 3
+        # Строки вкладки живут правее слота 0, в полосе KNOBS.
+        assert non_bg_count(fb, SLOT_W, KNOBS_BAND.y0, FRAME_W - SLOT_W, KNOBS_BAND.h) > 3
 
     def test_error_red(self) -> None:
         fb = make_fb()
         draw_setup(fb, sync_view(error="link module not installed"))
-        assert color_count(fb, Colors.DISCONNECTED, 350, BODY_Y0 + 78, 590, 30) > 0
+        assert (
+            color_count(fb, Colors.DISCONNECTED, SLOT_W, KNOBS_BAND.y0, FRAME_W - SLOT_W, KNOBS_BAND.h)
+            > 0
+        )
 
     def test_tab_bar_highlights_active(self) -> None:
         """Таб-бар внизу body: активная суб-вкладка — белой заливкой."""
@@ -365,10 +408,11 @@ class TestDrawPorts:
         assert non_bg_count(fb, 0, BODY_Y1 - 22, 500, 18) > 5
 
     def test_status_colors(self) -> None:
+        """Статусы портов цветом в полосе FOOT."""
         fb = make_fb()
         draw_ports(fb, ports_view())
-        assert color_count(fb, Colors.CONNECTED, 190, BODY_Y0, 160, 14) > 0
-        assert color_count(fb, Colors.DISCONNECTED, 190, BODY_Y0 + 14, 160, 14) > 0
+        assert color_count(fb, Colors.CONNECTED, 0, FOOT_BAND.y0, FRAME_W, FOOT_BAND.h) > 0
+        assert color_count(fb, Colors.DISCONNECTED, 0, FOOT_BAND.y0, FRAME_W, FOOT_BAND.h) > 0
 
 
 # ── Таб-бар / заголовок (chrome) ──────────────────────────────────────────────
@@ -399,12 +443,12 @@ class TestDrawWizard:
             kind="melodic",
         )
         draw_wizard(fb, view)
-        # Метка шага + две строки вариантов.
-        assert non_bg_count(fb, 0, BODY_Y0, 200, 14) > 5  # STEP: KIND
-        assert non_bg_count(fb, 0, BODY_Y0 + 28, 200, 14) > 3  # melodic
-        assert non_bg_count(fb, 0, BODY_Y0 + 42, 200, 14) > 3  # drum
-        # Курсор выбранной строки — акцентным цветом.
-        assert color_count(fb, Colors.BPM_LINK, 0, BODY_Y0 + 28, 20, 14) > 0
+        # Шаг — в полосе FOOT (слот 0).
+        assert non_bg_count(fb, 0, FOOT_BAND.y0, 200, FOOT_BAND.h) > 5  # STEP: KIND
+        # Варианты — списком в слоте 0 полосы KNOBS.
+        assert non_bg_count(fb, 0, KNOBS_BAND.y0, SLOT_W, KNOBS_BAND.h) > 5
+        # Курсор выбранного варианта — акцентным цветом.
+        assert color_count(fb, Colors.BPM_LINK, 0, KNOBS_BAND.y0, SLOT_W, KNOBS_BAND.h) > 0
 
     def test_wizard_profile_page_label(self) -> None:
         fb = make_fb()
@@ -416,8 +460,8 @@ class TestDrawWizard:
             page_count=2,
         )
         draw_wizard(fb, view)
-        # Индикатор страницы «2/2» в правом верхнем углу body.
-        assert non_bg_count(fb, FRAME_W - 130, BODY_Y0, 120, 14) > 3
+        # Индикатор страницы «2/2» — второй слот FOOT.
+        assert non_bg_count(fb, SLOT_W, FOOT_BAND.y0, SLOT_W, FOOT_BAND.h) > 3
 
 
 def demo_view(
@@ -435,43 +479,41 @@ def demo_view(
 
 
 class TestDemoScreenRender:
-    def test_top_tabs_row(self) -> None:
+    def test_top_tabs_are_upper_row_buttons(self) -> None:
+        """Верхние вкладки DEMO — кнопки Upper Row в полосе 14–31."""
         fb = make_fb()
         draw_demo(fb, demo_view())
-        # Полоса верхних вкладок начинается сразу под заголовком.
-        assert non_bg_count(fb, 0, BODY_Y0, FRAME_W, DEMO_TABS_H) > 10
+        assert non_bg_count(fb, 0, UPPER_BAND.y0, FRAME_W, UPPER_BAND.h) > 10
 
-    def test_active_top_tab_is_white(self) -> None:
+    def test_active_top_tab_is_white_in_its_slot(self) -> None:
         fb = make_fb()
-        draw_demo(fb, demo_view(top_index=2))  # gamma
-        # Активная вкладка занимает свой физический слот SLOT_W (120 px):
-        # gamma — индекс 2 → x 240..360, как кнопка Upper Row 3.
-        assert color_count(fb, Colors.WHITE, 2 * SLOT_W, BODY_Y0, SLOT_W, DEMO_TABS_H) > 50
+        draw_demo(fb, demo_view(top_index=2))  # gamma — слот 2 (x 240..360)
+        assert color_count(fb, Colors.WHITE, 2 * SLOT_W, UPPER_BAND.y0, SLOT_W, UPPER_BAND.h) > 50
+        # Соседний слот не активен — белой заливки нет.
+        assert color_count(fb, Colors.WHITE, SLOT_W, UPPER_BAND.y0, SLOT_W, UPPER_BAND.h) == 0
 
-    def test_columns_do_not_bleed_into_tab_rows(self) -> None:
-        """Колонки живут строго между рядами вкладок — иначе TabStrip
-        закрашивает подписи колонок (было: body TabStrip 22 px поверх Column)."""
+    def test_lower_tabs_live_in_lower_row(self) -> None:
+        """Нижние вкладки DEMO — кнопки Lower Row (124–141), а не полоса внизу body."""
         fb = make_fb()
         draw_demo(fb, demo_view())
-        # В полосе верхних вкладок не должно быть текста колонок ниже их низа:
-        # проверяем, что область колонок начинается не раньше DEMO_COLS_Y0.
-        assert DEMO_COLS_Y0 >= BODY_Y0 + DEMO_TABS_H
-        # Нижний ряд вкладок отрисован отдельной полосой.
-        assert non_bg_count(
-            fb, 0, BODY_Y1 - DEMO_BOTTOM_H, FRAME_W, DEMO_BOTTOM_H
-        ) > 10
+        assert non_bg_count(fb, 0, LOWER_BAND.y0, FRAME_W, LOWER_BAND.h) > 10
+        # Под-полоса FOOT у DEMO пуста: вкладки там не рисуются.
+        assert non_bg_count(fb, 0, FOOT_BAND.y0, FRAME_W, FOOT_BAND.h) == 0
 
-    def test_values_render_as_numbers_and_bars(self) -> None:
+    def test_values_render_as_ranges_in_knobs(self) -> None:
         fb = make_fb()
         draw_demo(fb, demo_view(values=(127, 0, 64, 32, 96, 10)))
-        # Число значения + бар в колонке E3.
-        assert non_bg_count(fb, COL_W * 2, DEMO_COLS_Y0, COL_W, 50) > 5
-        # Бар рисуется только когда frac задан и > 0: колонка E4 (value=0)
-        # содержит число, но бар нулевой — фон бара закрашивается отдельно.
-        assert (
-            color_count(fb, Colors.TRACK_FILL, COL_W * 3, DEMO_COLS_Y0, COL_W, 60)
-            == 0
-        )
+        # E3 — слот 2: значение и бар в полосе KNOBS.
+        assert non_bg_count(fb, SLOT_W * 2, KNOBS_BAND.y0, SLOT_W, 60) > 5
+        assert color_count(fb, Colors.TRACK_FILL, SLOT_W * 2, KNOBS_BAND.y0, SLOT_W, 60) > 10
+
+    def test_zero_value_draws_no_fill(self) -> None:
+        fb = make_fb()
+        draw_demo(fb, demo_view(values=(127, 0, 64, 32, 96, 10)))
+        # E4 — слот 3, value=0: число есть, заливки бара нет.
+        assert non_bg_count(fb, SLOT_W * 3, KNOBS_BAND.y0, SLOT_W, 60) > 3
+        assert color_count(fb, Colors.TRACK_FILL, SLOT_W * 3, KNOBS_BAND.y0, SLOT_W, 60) == 0
+
 
     def test_empty_tabs_do_not_crash(self) -> None:
         fb = make_fb()

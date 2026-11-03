@@ -48,7 +48,10 @@ from src.devices.display_state import (
     TrackRowView,
     WizardView,
 )
+from src.devices.push2.layout import Button
+from src.devices.push2.screens import DEFAULT_SCREENS, scale_root_rows
 from src.devices.push2.track_colors import track_color
+from src.devices.push2.widgets import SLOT_COUNT
 from src.repl.engine_control import EngineControl
 from src.repl.status import StatusSnapshot, TrackSummary
 from src.session import PROFILES
@@ -245,6 +248,7 @@ class ScreenController:
                 midi_device=snap.midi_clock_device or "—",
                 tab=tab,
                 tabs=SETUP_TABS,
+                sources=CLOCK_SOURCES,
             )
             return replace(view, sync=sync_view)
         if screen is ScreenId.WIZARD:
@@ -268,6 +272,8 @@ class ScreenController:
             return replace(view, demo=self._demo_view())
         # PORTS
         route_track = self._route_track(snap)
+        track_names = tuple(t.name for t in snap.tracks)
+        port_options = (None,) + tuple(p.name for p in snap.ports)
         ports_view = PortsView(
             rows=tuple(
                 PortRowView(label=p.name, status=p.status, detail=p.detail)
@@ -276,6 +282,17 @@ class ScreenController:
             route_track=route_track.name if route_track else "—",
             route_port=route_track.port if route_track else None,
             selected=self.state.selected,
+            tracks=track_names,
+            track_index=(
+                track_names.index(route_track.name)
+                if route_track and route_track.name in track_names
+                else 0
+            ),
+            port_index=(
+                port_options.index(route_track.port)
+                if route_track and route_track.port in port_options
+                else 0
+            ),
         )
         return replace(view, ports=ports_view)
 
@@ -305,6 +322,15 @@ class ScreenController:
             self.state.flash(f"SWING {snap.swing * 100:.0f} %", now, ENCODER_TOUCH_TTL)
             return
 
+        screen = self.state.screen
+
+        # SCALE: касание энкодера E1–E8 выбирает лад этого слота напрямую.
+        if screen is ScreenId.SCALE and name in TRACK_ENCODERS:
+            idx = TRACK_ENCODERS.index(name)
+            if 0 <= idx < len(SCALES) and SCALES[idx] != snap.scale:
+                self._command(self._engine.set_scale(SCALES[idx]), now)
+            return
+
         if name == PORTS_BUTTON:
             self._switch_screen(ScreenId.PORTS)
             return
@@ -328,6 +354,9 @@ class ScreenController:
         if name == DEMO_BUTTON:
             self.state.screen = ScreenId.DEMO
             return
+        # SCALE: Upper/Lower Row 1–6 выбирают тонику (эталон Scale Push 2).
+        if screen is ScreenId.SCALE and self._scale_root_button(name, now, snap):
+            return
         if name.startswith(LOWER_ROW_PREFIX):
             self._lower_row_button(name, now, snap)
             return
@@ -347,7 +376,6 @@ class ScreenController:
             self._wizard_button(name, now, snap)
             return
 
-        screen = self.state.screen
         if screen is ScreenId.DEMO and name in ("Left", "Right", "Up", "Down"):
             self._demo_nav(name)
             return
@@ -397,6 +425,33 @@ class ScreenController:
         elif name == "Browse" and screen is ScreenId.PORTS:
             self._command(self._engine.rescan_ports(), now)
         # Прочие кнопки не назначены (Duplicate/Layout/Note — резерв).
+
+    def _scale_root_button(
+        self, name: str, now: float, snap: StatusSnapshot
+    ) -> bool:
+        """SCALE: Upper/Lower Row 1–6 выбирают тонику; прочие кнопки — не наши.
+
+        Возвращает True, если кнопка обработана (тогда общий обработчик Lower Row
+        её не увидит). Слоты 7–8 не назначены — тоже возвращаем True, чтобы
+        нажатие не проваливалось в выбор дорожки.
+        """
+        for prefix in ("Upper Row ", LOWER_ROW_PREFIX):
+            if not name.startswith(prefix):
+                continue
+            try:
+                slot = int(name[len(prefix) :]) - 1
+            except ValueError:
+                return False
+            if not 0 <= slot < SLOT_COUNT:
+                return False
+            top, bottom = scale_root_rows(ROOTS)
+            row = top if prefix == "Upper Row " else bottom
+            if slot >= len(row):
+                return True  # кнопка ряда, но слот не назначен
+            if row[slot] != snap.root:
+                self._command(self._engine.set_root(row[slot]), now)
+            return True
+        return False
 
     def _lower_row_button(self, name: str, now: float, snap: StatusSnapshot) -> None:
         """Lower Row 1–8: удаление при вооружённом Delete, иначе выбор+GEN."""
@@ -671,15 +726,14 @@ class ScreenController:
     def _global_encoder(
         self, idx: int, increment: int, now: float, snap: StatusSnapshot
     ) -> None:
-        if idx == 0:
-            pos = ROOTS.index(snap.root) if snap.root in ROOTS else 0
-            root = ROOTS[(pos + (1 if increment > 0 else -1)) % len(ROOTS)]
-            self._command(self._engine.set_root(root), now)
-        elif idx == 1:
-            pos = SCALES.index(snap.scale) if snap.scale in SCALES else 0
-            scale = SCALES[(pos + (1 if increment > 0 else -1)) % len(SCALES)]
-            self._command(self._engine.set_scale(scale), now)
-        # E3+ на SCALE не назначены: свинг — Swing Encoder (касание → flash).
+        """SCALE: любой энкодер листает лады — слоты KNOBS и есть лады (Ф5).
+
+        Freeze корня — кнопки Upper/Lower Row 1–6 и стрелки Left/Right:
+        было бы нельзя, чтобы энкодер менял не то, что написано над ним.
+        """
+        pos = SCALES.index(snap.scale) if snap.scale in SCALES else 0
+        scale = SCALES[(pos + (1 if increment > 0 else -1)) % len(SCALES)]
+        self._command(self._engine.set_scale(scale), now)
 
     def _sync_encoder(self, increment: int, now: float, snap: StatusSnapshot) -> None:
         pos = CLOCK_SOURCES.index(snap.clock_source)
@@ -802,15 +856,47 @@ class ScreenController:
         # остальные кнопки ряда освобождены под будущее и не подсвечиваются).
         states[PORTS_BUTTON] = LED_WHITE if state.screen is ScreenId.PORTS else LED_GRAY
         states[DEMO_BUTTON] = LED_GREEN if state.screen is ScreenId.DEMO else LED_GRAY
-        start = state.page * PAGE_SIZE
-        for i in range(PAGE_SIZE):
-            if start + i < len(snap.tracks):
-                states[f"Lower Row {i + 1}"] = (
-                    LED_GREEN if i == state.selected % PAGE_SIZE else LED_WHITE
-                )
+        # Upper/Lower Row 1–8 — из Grid-макета экрана (Ф6): Button.active → зелёный,
+        # иначе белый. Экраны без макета (TRACKS, SCALE, SETUP, WIZARD) — карта ниже.
+        for row_name, buttons in self._layout_button_leds(self.build_view(snap, 0.0)):
+            for slot, active in enumerate(buttons):
+                states[f"{row_name} {slot + 1}"] = LED_GREEN if active else LED_WHITE
+        # TRACKS: Lower Row — дорожки страницы, курсор — зелёный.
+        if state.screen is ScreenId.TRACKS:
+            start = state.page * PAGE_SIZE
+            for i in range(PAGE_SIZE):
+                if start + i < len(snap.tracks):
+                    states[f"Lower Row {i + 1}"] = (
+                        LED_GREEN if i == state.selected % PAGE_SIZE else LED_WHITE
+                    )
         if state.screen is ScreenId.WIZARD:
             states["Add Track"] = LED_GREEN  # в wizard — подтверждение шага
         return states
+
+    def _layout_button_leds(
+        self, view: ScreenView
+    ) -> tuple[tuple[str, tuple[bool, ...]], ...]:
+        """Активность Button по рядам Upper/Lower Row из макета экрана.
+
+        Пустой кортеж — экран без Grid-макета (там LED считается ручной картой выше).
+        """
+        screen = next(
+            (s for s in DEFAULT_SCREENS if s.name == self.state.screen.value), None
+        )
+        if screen is None:
+            return ()
+        try:
+            layout = screen.layout(view)
+        except NotImplementedError:
+            return ()
+        rows: list[tuple[str, tuple[bool, ...]]] = []
+        for row_name, row in (("Upper Row", layout.upper), ("Lower Row", layout.lower)):
+            if not any(isinstance(item, Button) for item in row):
+                continue
+            rows.append(
+                (row_name, tuple(getattr(item, "active", False) for item in row[:SLOT_COUNT]))
+            )
+        return tuple(rows)
 
     # ------------------------------------------------------------------
     # Хелперы view
@@ -847,7 +933,7 @@ class ScreenController:
             track = self._selected_track(snap)
             return f"MACRO: {track.name}" if track else "MACRO: —"
         if screen is ScreenId.SCALE:
-            return "SCALE"
+            return f"SCALE: {snap.root} {snap.scale}"
         if screen is ScreenId.SETUP:
             tab = SETUP_TABS[self.state.setup_tab % len(SETUP_TABS)]
             return f"SETUP: {tab.upper()}"

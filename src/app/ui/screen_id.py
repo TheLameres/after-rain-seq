@@ -8,28 +8,25 @@ from enum import Enum
 class ScreenId(Enum):
     """Экраны навигации.
 
-    Таб-бар (верхний ряд дисплея) — только дорожные вкладки
-    (порядок — :meth:`tab_order`): GEN, MACRO, PORTS. Каждая вкладка
-    расположена под своей кнопкой: GEN — под Clip (CC 113),
-    MACRO — под Device (CC 110), PORTS — под Upper Row 5 (CC 106).
-    Upper Row 1–4 и 6–8 освобождены под будущее (D3+). Вне табов:
+    Таб-бара нет (удалён в Ф0): экраны переключаются только выделенными
+    кнопками; Left/Right двигают курсор по дорожкам, а не экраны.
 
     - ``TRACKS`` — список дорожек, кнопка ``Session`` (CC 51);
-    - ``SCALE`` — корень/лад, кнопка ``Scale`` (CC 58); не вкладка;
-    - ``SETUP`` — настройки (суб-вкладки), кнопка ``Setup`` (CC 30); не вкладка;
+    - ``TRACK_GEN`` — генерация выбранной дорожки, ``Clip`` (CC 113);
+    - ``TRACK_MACRO`` — макро-CC синтов, ``Device`` (CC 110);
+    - ``PORTS`` — порты и назначение дорожек, ``Mix`` (CC 112);
+    - ``SCALE`` — корень/лад, ``Scale`` (CC 58);
+    - ``SETUP`` — настройки (суб-вкладки), ``Setup`` (CC 30);
     - ``WIZARD`` — модальный экран создания дорожки (Add Track, CC 53);
     - ``DEMO`` — демо-экран фреймворка (вкладки сверху/снизу, 8 энкодеров),
-      кнопка ``Note`` (CC 50); не вкладка.
-
-    Выделенные кнопки переключают экраны: ``Clip`` → GEN, ``Device`` → MACRO,
-    ``Scale`` → SCALE, ``Setup`` → SETUP, ``Session`` → TRACKS, ``Note`` → DEMO.
+      ``Note`` (CC 50).
     """
 
-    TRACKS = "tracks"  # Session (CC 51) — не таб
-    TRACK_GEN = "gen"  # генерация — CLIP (CC 113); таб под Clip
-    TRACK_MACRO = "macro"  # макро-CC синтов — DEVICE (CC 110); таб под Device
-    SCALE = "scale"  # корень/лад — SCALE (CC 58); не таб
-    SETUP = "setup"  # настройки (суб-вкладки) — SETUP (CC 30); не таб
-    PORTS = "ports"  # таб под Upper Row 5 (CC 106)
-    WIZARD = "wizard"  # модальный — не таб
-    DEMO = "demo"  # демо фреймворка — NOTE (CC 50); не таб
+    TRACKS = "tracks"  # Session (CC 51)
+    TRACK_GEN = "gen"  # генерация — Clip (CC 113)
+    TRACK_MACRO = "macro"  # макро-CC синтов — Device (CC 110)
+    SCALE = "scale"  # корень/лад — Scale (CC 58)
+    SETUP = "setup"  # настройки (суб-вкладки) — Setup (CC 30)
+    PORTS = "ports"  # порты — Mix (CC 112)
+    WIZARD = "wizard"  # модальный — Add Track (CC 53)
+    DEMO = "demo"  # демо фреймворка — Note (CC 50)

@@ -92,6 +92,7 @@ class SyncView:
     midi_device: str  # устройство MIDI-клока или «—»
     tab: str = "clock"
     tabs: tuple[str, ...] = ("clock", "midi", "link")
+    sources: tuple[str, ...] = ("internal", "midi", "link")  # варианты источника клока
 
 
 @dataclass(frozen=True)
@@ -111,6 +112,9 @@ class PortsView:
     route_track: str  # дорожка для назначения (ENC1)
     route_port: str | None  # её текущий порт (None = «—»)
     selected: int  # курсор
+    tracks: tuple[str, ...] = ()  # имена дорожек для E1
+    track_index: int = 0  # позиция route_track в tracks
+    port_index: int = 0  # позиция route_port в («—», *порты)
 
 
 @dataclass(frozen=True)

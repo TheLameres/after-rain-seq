@@ -298,6 +298,47 @@ class TestNavigation:
         btn(ctl, "Setup")
         assert ctl.state.screen is ScreenId.SETUP
 
+    def test_scale_upper_row_selects_root(self) -> None:
+        """SCALE (Ф5): Upper Row 1–6 — квинтовый круг сверху."""
+        ctl, engine, _ = make_controller()
+        btn(ctl, "Scale")
+        btn(ctl, "Upper Row 2")  # C G -> G
+        assert engine.called("set_root") == [("G",)]
+        btn(ctl, "Upper Row 6")  # -> B
+        assert engine.called("set_root") == [("G",), ("B",)]
+
+    def test_scale_lower_row_selects_root(self) -> None:
+        """SCALE (Ф5): Lower Row 1–6 — нисходящие квинты от F."""
+        ctl, engine, _ = make_controller()
+        btn(ctl, "Scale")
+        btn(ctl, "Lower Row 1")  # F
+        assert engine.called("set_root") == [("F",)]
+        btn(ctl, "Lower Row 6")  # F#
+        assert engine.called("set_root") == [("F",), ("F#",)]
+
+    def test_scale_unassigned_root_slots_are_noop(self) -> None:
+        """Слоты 7–8 рядов на SCALE не назначены — не выбирают дорожку."""
+        ctl, engine, _ = make_controller((make_track("Pad 1"), make_track("Pad 2")))
+        btn(ctl, "Scale")
+        btn(ctl, "Upper Row 7")
+        btn(ctl, "Lower Row 8")
+        assert ctl.state.screen is ScreenId.SCALE
+        assert engine.called("set_root") == []
+        assert engine.called("remove_track") == []
+
+    def test_scale_encoder_touch_selects_scale(self) -> None:
+        """Касание энкодера E3 выбирает лад слота 3 (phrygian)."""
+        ctl, engine, _ = make_controller()
+        btn(ctl, "Scale")
+        btn(ctl, "Track3 Encoder")
+        assert engine.called("set_scale") == [("phrygian",)]
+
+    def test_scale_root_button_ignored_on_other_screens(self) -> None:
+        """Upper Row вне SCALE не меняет тонику."""
+        ctl, engine, _ = make_controller()
+        btn(ctl, "Upper Row 2")
+        assert engine.called("set_root") == []
+
     def test_scale_arrows_rotate_root_and_scale(self) -> None:
         """SCALE: Left/Right — корень, Up/Down — лад."""
         ctl, engine, _ = make_controller()
@@ -557,14 +598,16 @@ class TestEncoders:
         assert engine.called("set_bpm") == [(118.0 + 2 * 0.5,)]
 
     def test_global_encoders(self) -> None:
+        """SCALE (Ф5): любой энкодер листает лады, корень — кнопками рядов."""
         ctl, engine, _ = make_controller()
         btn(ctl, "Scale")  # SCALE
-        enc(ctl, 1)  # ROOT: A -> A#
-        assert engine.called("set_root") == [("A#",)]
-        enc(ctl, 2)  # SCALE: dorian -> phrygian
+        enc(ctl, 2)  # dorian -> phrygian
         assert engine.called("set_scale") == [("phrygian",)]
-        enc(ctl, 3)  # E3 на SCALE не назначен (свинг — Swing Encoder, D2-6)
+        enc(ctl, 3)  # слот 3 — тот же список ладов
+        assert engine.called("set_scale") == [("phrygian",), ("phrygian",)]
+        # Энкодеры не трогают свинг и не меняют корень.
         assert engine.called("set_swing") == []
+        assert engine.called("set_root") == []
 
     def test_swing_encoder_always_sets_swing(self) -> None:
         """Swing Encoder крутит свинг на любом экране."""
@@ -1027,3 +1070,75 @@ class TestDemoScreen:
         view = ctl.build_view(engine.get_status(), NOW)
         assert view.demo is None
         assert view.tracks is not None
+
+
+class TestLayoutLed:
+    """Ф6: Upper/Lower Row LED \u0441\u0447\u0438\u0442\u0430\u044e\u0442\u0441\u044f \u0438\u0437 Grid-\u043c\u0430\u043a\u0435\u0442\u0430 \u044d\u043a\u0440\u0430\u043d\u0430."""
+
+    def test_demo_tabs_leds_follow_layout(self) -> None:
+        """DEMO: \u0430\u043a\u0442\u0438\u0432\u043d\u0430\u044f \u0432\u0435\u0440\u0445\u043d\u044f\u044f \u0432\u043a\u043b\u0430\u0434\u043a\u0430 \u2014 \u0437\u0435\u043b\u0451\u043d\u0430\u044f, \u043e\u0441\u0442\u0430\u043b\u044c\u043d\u044b\u0435 \u2014 \u0431\u0435\u043b\u044b\u0435."""
+        ctl, _engine, _ = make_controller()
+        btn(ctl, "Note")
+        from src.app.ui.screen_controller import LED_GREEN, LED_WHITE
+
+        states = ctl.button_led_states(ctl._engine.get_status())
+        assert states["Upper Row 1"] == LED_GREEN
+        assert states["Upper Row 2"] == LED_WHITE
+        assert states["Lower Row 1"] == LED_GREEN
+
+    def test_active_tab_moves_led(self) -> None:
+        """\u041f\u0435\u0440\u0435\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0435 \u0432\u043a\u043b\u0430\u0434\u043a\u0438 E1 \u043f\u0435\u0440\u0435\u043d\u043e\u0441\u0438\u0442 \u0437\u0435\u043b\u0451\u043d\u044b\u0439 LED \u043d\u0430 \u0441\u043b\u0435\u0434\u0443\u044e\u0449\u0443\u044e \u043a\u043d\u043e\u043f\u043a\u0443."""
+        ctl, _engine, _ = make_controller()
+        btn(ctl, "Note")
+        from src.app.ui.screen_controller import LED_GREEN, LED_WHITE
+
+        ctl.handle(UiEvent.encoder("Track1 Encoder", 1), NOW)
+        states = ctl.button_led_states(ctl._engine.get_status())
+        assert states["Upper Row 1"] == LED_WHITE
+        assert states["Upper Row 2"] == LED_GREEN
+
+    def test_screen_without_layout_keeps_manual_leds(self) -> None:
+        """TRACKS \u0431\u0435\u0437 Grid-\u043c\u0430\u043a\u0435\u0442\u0430: Lower Row \u2014 \u0434\u043e\u0440\u043e\u0436\u043a\u0438 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u044b, \u043a\u0443\u0440\u0441\u043e\u0440 \u0437\u0435\u043b\u0451\u043d\u044b\u0439."""
+        ctl, _engine, _ = make_controller()
+        from src.app.ui.screen_controller import LED_GREEN, LED_WHITE
+
+        ctl, engine, _ = make_controller((make_track("Pad 1"), make_track("Pad 2")))
+        states = ctl.button_led_states(engine.get_status())
+        assert states["Lower Row 1"] == LED_GREEN
+        assert states["Lower Row 2"] == LED_WHITE
+
+
+class TestLayoutLed:
+    """Ф6: Upper/Lower Row LED \u0441\u0447\u0438\u0442\u0430\u044e\u0442\u0441\u044f \u0438\u0437 Grid-\u043c\u0430\u043a\u0435\u0442\u0430 \u044d\u043a\u0440\u0430\u043d\u0430."""
+
+    def test_demo_tabs_leds_follow_layout(self) -> None:
+        """DEMO: \u0430\u043a\u0442\u0438\u0432\u043d\u0430\u044f \u0432\u0435\u0440\u0445\u043d\u044f\u044f \u0432\u043a\u043b\u0430\u0434\u043a\u0430 \u2014 \u0437\u0435\u043b\u0451\u043d\u0430\u044f, \u043e\u0441\u0442\u0430\u043b\u044c\u043d\u044b\u0435 \u2014 \u0431\u0435\u043b\u044b\u0435."""
+        ctl, _engine, _ = make_controller()
+        btn(ctl, "Note")
+        from src.app.ui.screen_controller import LED_GREEN, LED_WHITE
+
+        states = ctl.button_led_states(ctl._engine.get_status())
+        assert states["Upper Row 1"] == LED_GREEN
+        assert states["Upper Row 2"] == LED_WHITE
+        assert states["Lower Row 1"] == LED_GREEN
+
+    def test_active_tab_moves_led(self) -> None:
+        """\u041f\u0435\u0440\u0435\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0435 \u0432\u043a\u043b\u0430\u0434\u043a\u0438 E1 \u043f\u0435\u0440\u0435\u043d\u043e\u0441\u0438\u0442 \u0437\u0435\u043b\u0451\u043d\u044b\u0439 LED \u043d\u0430 \u0441\u043b\u0435\u0434\u0443\u044e\u0449\u0443\u044e \u043a\u043d\u043e\u043f\u043a\u0443."""
+        ctl, _engine, _ = make_controller()
+        btn(ctl, "Note")
+        from src.app.ui.screen_controller import LED_GREEN, LED_WHITE
+
+        ctl.handle(UiEvent.encoder("Track1 Encoder", 1), NOW)
+        states = ctl.button_led_states(ctl._engine.get_status())
+        assert states["Upper Row 1"] == LED_WHITE
+        assert states["Upper Row 2"] == LED_GREEN
+
+    def test_screen_without_layout_keeps_manual_leds(self) -> None:
+        """TRACKS \u0431\u0435\u0437 Grid-\u043c\u0430\u043a\u0435\u0442\u0430: Lower Row \u2014 \u0434\u043e\u0440\u043e\u0436\u043a\u0438 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u044b, \u043a\u0443\u0440\u0441\u043e\u0440 \u0437\u0435\u043b\u0451\u043d\u044b\u0439."""
+        ctl, _engine, _ = make_controller()
+        from src.app.ui.screen_controller import LED_GREEN, LED_WHITE
+
+        ctl, engine, _ = make_controller((make_track("Pad 1"), make_track("Pad 2")))
+        states = ctl.button_led_states(engine.get_status())
+        assert states["Lower Row 1"] == LED_GREEN
+        assert states["Lower Row 2"] == LED_WHITE

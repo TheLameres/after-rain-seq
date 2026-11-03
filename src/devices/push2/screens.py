@@ -37,19 +37,30 @@ from src.devices.display_state import (
     TrackRowView,
     WizardView,
 )
+from src.devices.push2.layout import (
+    KNOBS_Y0,
+    LOWER_BAND,
+    Button,
+    Empty,
+    List,
+    Range,
+    ScreenLayout,
+    SlotItem,
+    Tabs,
+    Text,
+    render_layout,
+)
 from src.devices.push2.renderer import FRAME_W, Colors, FrameBuffer
 from src.devices.push2.widgets import (
     BODY_Y0,
     BODY_Y1,
     COL_W,
-    Column,
+    SLOT_COUNT,
+    SLOT_W,
     ColumnGrid,
     Label,
     Marker,
     Rect,
-    SegmentTabs,
-    TabStrip,
-    slot_cells,
 )
 
 __all__ = [
@@ -57,10 +68,6 @@ __all__ = [
     "BODY_Y1",
     "COL_W",
     "DEFAULT_SCREENS",
-    "DEMO_BOTTOM_H",
-    "DEMO_COLS_Y0",
-    "DEMO_COLS_Y1",
-    "DEMO_TABS_H",
     "DemoScreen",
     "PortsScreen",
     "ScaleScreen",
@@ -86,15 +93,15 @@ __all__ = [
 FLASH = Colors.BPM_MIDI  # orange — reuse: заметный, но не крикливый
 FLASH_ERROR = Colors.DISCONNECTED
 
+# SCALE: корни обрамляют сетку ладов сверху и снизу (эталон Push 2).
+# Верхний ряд — восходящие квинты от C, нижний — нисходящие от F.
+SCALE_QUINT_TOP: tuple[int, ...] = (0, 7, 2, 9, 4, 11)  # C G D A E B
+SCALE_QUINT_BOTTOM: tuple[int, ...] = (5, 10, 3, 8, 1, 6)  # F A# D# G# C# F#
 _ROW_H = 14  # высота строки списка (шрифт sm)
 _TRACK_ROW_H = 13  # строки TRACKS компактнее: внизу полоса имён под Lower Row
 
-# DEMO: полоса верхних вкладок 22 px внутрь body, полоса нижних — 16 px от низа.
-# Колонки живут строго между ними, иначе TabStrip/Column перекрывают друг друга.
-DEMO_TABS_H = 22
-DEMO_BOTTOM_H = 16
-DEMO_COLS_Y0 = BODY_Y0 + DEMO_TABS_H
-DEMO_COLS_Y1 = BODY_Y1 - DEMO_BOTTOM_H
+# DEMO переведён на Grid (Ф2): вкладки — кнопки Upper/Lower Row, энкодеры —
+# в полосе KNOBS. Прежние DEMO_TABS_H / DEMO_COLS_Y0 / DEMO_BOTTOM_H не нужны.
 
 # Цвета статусов портов (значения из PortSummary.status).
 _PORT_STATUS_COLORS = {
@@ -103,6 +110,22 @@ _PORT_STATUS_COLORS = {
     "ambiguous": Colors.BPM_MIDI,
     "error": Colors.DISCONNECTED,
 }
+
+
+def scale_root_rows(roots: tuple[str, ...]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Разложить тоники по Upper/Lower Row: (верхний ряд, нижний ряд).
+
+    Для 12 тоник — квинтовый круг (как на эталонном экране Scale Push 2): сверху
+    C G D A E B, снизу F A# D# G# C# F#. Для другого числа — пополам, чтобы
+    экран не падал на нестандартном DTO.
+    """
+    if len(roots) == 12:
+        return (
+            tuple(roots[i] for i in SCALE_QUINT_TOP),
+            tuple(roots[i] for i in SCALE_QUINT_BOTTOM),
+        )
+    half = (len(roots) + 1) // 2
+    return roots[:half], roots[half:]
 
 
 def _percent(value: float | None) -> tuple[str, float | None]:
@@ -133,7 +156,15 @@ class Screen(ABC):
 
     @abstractmethod
     def draw_body(self, fb: FrameBuffer, body: Any) -> None:
-        """Отрисовать тело body на FrameBuffer (body очищает сам себя)."""
+        """Отрисовывать тело body на FrameBuffer (body очищает сам себя)."""
+
+    def layout(self, view: ScreenView) -> ScreenLayout:
+        """Собрать Grid-макет экрана.
+
+        Экраны, переведённые на Grid, переопределяют метод; остальные пока
+        рисуют тело через ``draw_body`` — для них макет не определён.
+        """
+        raise NotImplementedError(f"экран {self.name!r} ещё не собран через ScreenLayout")
 
     def draw(self, fb: FrameBuffer, view: ScreenView) -> None:
         """Отрисовать тело из единого ScreenView (вызывает Screens)."""
@@ -185,9 +216,10 @@ class TracksScreen(Screen):
                     fb, Rect(690, y, 80, _TRACK_ROW_H)
                 )
 
-        # Нижняя полоса: имена дорожек — колонка i ровно под Lower Row i+1.
+        # Нижняя полоса: имена дорожек — колонка i ровно под кнопкой Lower Row i+1
+        # (полоса LOWER_BAND, Ф4); FOOT под ней остаётся пустым.
         grid = ColumnGrid()
-        y = BODY_Y1 - 15
+        y = LOWER_BAND.y0 + 2
         for i in range(grid.count):
             slot = rows[i] if i < len(rows) else None
             rect = Rect(grid.rect(i).x, y, COL_W, 13)
@@ -207,280 +239,337 @@ class TracksScreen(Screen):
 
 
 class TrackGenScreen(Screen):
-    """GEN (Clip): колонки E1–E5 — SRC/SRC2/GATE/DEN/MUT."""
+    """GEN (Clip): энкодеры E1–E5 — SRC/SRC2/GATE/DEN/MUT, E6–E8 пустые.
+
+    Grid-макет (Ф3): верхний и нижний ряды пусты — Clip и Lower Row слотов
+    на дисплее не имеют. Строка PORT/CH/PROFILE/VOICING — в полосе FOOT.
+    """
 
     name = "gen"
     view_attr = "track"
 
+    def layout(self, view: ScreenView) -> ScreenLayout:
+        """GEN: E1–E2 — источники (списки), E3–E5 — GATE/DEN/MUT (доли)."""
+        detail = view.track
+        if detail is None:
+            return ScreenLayout()
+
+        src2 = detail.sources[1] if len(detail.sources) > 1 else "—"
+        # Доли 0..1 на экране показываются процентами («25 %»), как было до Grid.
+        gate = detail.gate * 100 if detail.kind != "drum" else None
+        den = detail.density * 100 if detail.density is not None else None
+
+        encoders: tuple[SlotItem, ...] = (
+            List("SRC (E1)", detail.sources or ("—",)),
+            List("SRC2 (E2)", (src2,) if src2 != "—" else ("—",)),
+            Range("GATE (E3)", gate, 0.0, 100.0, unit=" %"),
+            Range("DEN (E4)", den, 0.0, 100.0, unit=" %"),
+            Range("MUT (E5)", detail.mutate * 100, 0.0, 100.0, unit=" %"),
+        ) + (Empty(),) * (SLOT_COUNT - 5)
+
+        foot: tuple[SlotItem, ...] = (
+            Text("PORT", f"> {detail.port}" if detail.port else "—"),
+            Text("CH", str(detail.channel)),
+            Text("PROFILE", detail.profile),
+            Text("VOICING", detail.voicing or "—") if detail.kind != "drum" else Empty(),
+        ) + (Empty(),) * 4
+
+        return ScreenLayout(
+            encoders=encoders,
+            foot=foot,
+            stripe=detail.color or None,
+        )
+
     def draw_body(self, fb: FrameBuffer, body: TrackDetailView) -> None:
-        view = body
-        fb.fill_rect(0, BODY_Y0, FRAME_W, BODY_Y1 - BODY_Y0, Colors.BG)
-        fb.fill_rect(0, BODY_Y0, 4, BODY_Y1 - BODY_Y0, view.color or Colors.DIM)
-
-        src = view.sources[0] if len(view.sources) > 0 else "—"
-        src2 = view.sources[1] if len(view.sources) > 1 else "—"
-        gate_text, gate_frac = _percent(view.gate if view.kind != "drum" else None)
-        den_text, den_frac = _percent(view.density)
-        mut_text, mut_frac = _percent(view.mutate)
-
-        grid = ColumnGrid()
-        Column("SRC (E1)", src).render(fb, grid.rect(0))
-        Column("SRC2 (E2)", src2).render(fb, grid.rect(1))
-        Column("GATE (E3)", gate_text, gate_frac).render(fb, grid.rect(2))
-        Column("DEN (E4)", den_text, den_frac).render(fb, grid.rect(3))
-        Column("MUT (E5)", mut_text, mut_frac).render(fb, grid.rect(4))
-
-        # Строка внизу: куда играет дорожка.
-        y = BODY_Y1 - 20
-        Label("PORT", "sm", Colors.DIM).render(fb, Rect(12, y, 44, 12))
-        port = f"> {view.port}" if view.port else "—"
-        Label(port, "sm", Colors.GRAY).render(fb, Rect(60, y, 230, 12))
-        Label("CH", "sm", Colors.DIM).render(fb, Rect(300, y, 26, 12))
-        Label(str(view.channel), "sm", Colors.GRAY).render(fb, Rect(330, y, 40, 12))
-        Label("PROFILE", "sm", Colors.DIM).render(fb, Rect(420, y, 64, 12))
-        Label(view.profile, "sm", Colors.GRAY).render(fb, Rect(490, y, 150, 12))
-        if view.kind != "drum":
-            Label("VOICING", "sm", Colors.DIM).render(fb, Rect(650, y, 72, 12))
-            Label(view.voicing or "—", "sm", Colors.GRAY).render(
-                fb, Rect(730, y, 120, 12)
-            )
+        """GEN body через Grid-макет."""
+        view = ScreenView(screen=self.name, title="", flash=None, track=body)
+        render_layout(fb, self.layout(view))
 
 
 # ── TRACK MACRO (макро-контроль синтов) ───────────────────────────────────────
 
 
 class TrackMacroScreen(Screen):
-    """MACRO (Device): колонки E1–E3 — TONE/SPACE/DEPTH (performance-CC)."""
+    """MACRO (Device): энкодеры E1–E3 — TONE/SPACE/DEPTH (performance-CC), E4–E8 пустые."""
 
     name = "macro"
     view_attr = "track_macro"
 
-    def draw_body(self, fb: FrameBuffer, body: TrackMacroView) -> None:
-        view = body
-        fb.fill_rect(0, BODY_Y0, FRAME_W, BODY_Y1 - BODY_Y0, Colors.BG)
-        fb.fill_rect(0, BODY_Y0, 4, BODY_Y1 - BODY_Y0, view.color or Colors.DIM)
+    def layout(self, view: ScreenView) -> ScreenLayout:
+        """MACRO: три оси в долях 0..127; -1 — значение не применимо."""
+        macro = view.track_macro
+        if macro is None:
+            return ScreenLayout()
 
         labels = ("TONE (E1)", "SPACE (E2)", "DEPTH (E3)")
-        grid = ColumnGrid()
-        for i, (label, value) in enumerate(zip(labels, view.macros, strict=True)):
-            if value < 0:
-                Column(label, "—").render(fb, grid.rect(i))
-            else:
-                frac = max(0, min(127, value)) / 127.0
-                Column(label, f"{round(frac * 100)} %", frac).render(fb, grid.rect(i))
-
-        # Строка внизу: куда уходят CC.
-        y = BODY_Y1 - 20
-        if view.port:
-            Label("PORT", "sm", Colors.DIM).render(fb, Rect(12, y, 44, 12))
-            Label(f"> {view.port}", "sm", Colors.GRAY).render(fb, Rect(60, y, 230, 12))
-            Label("CH", "sm", Colors.DIM).render(fb, Rect(300, y, 26, 12))
-            Label(str(view.channel), "sm", Colors.GRAY).render(fb, Rect(330, y, 40, 12))
-        else:
-            Label("NO PORT — CC NOT SENT", "sm", Colors.DISCONNECTED).render(
-                fb, Rect(12, y, 400, 12)
+        encoders: tuple[SlotItem, ...] = tuple(
+            Range(
+                label,
+                None if value < 0 else float(max(0, min(127, value))),
+                0.0,
+                127.0,
             )
+            for label, value in zip(labels, macro.macros, strict=True)
+        ) + (Empty(),) * (SLOT_COUNT - 3)
+
+        if macro.port:
+            foot: tuple[SlotItem, ...] = (
+                Text("PORT", f"> {macro.port}"),
+                Text("CH", str(macro.channel)),
+            ) + (Empty(),) * 6
+        else:
+            foot = (
+                Text("PORT", "NO PORT — CC NOT SENT", color=Colors.DISCONNECTED),
+            ) + (Empty(),) * 7
+
+        return ScreenLayout(
+            encoders=encoders, foot=foot, stripe=macro.color or None
+        )
+
+    def draw_body(self, fb: FrameBuffer, body: TrackMacroView) -> None:
+        """MACRO body через Grid-макет."""
+        view = ScreenView(screen=self.name, title="", flash=None, track_macro=body)
+        render_layout(fb, self.layout(view))
 
 
 # ── WIZARD (создание дорожки) ─────────────────────────────────────────────────
 
 
 class WizardScreen(Screen):
-    """Wizard Add Track: окно вариантов (kind / profile / route) с курсором."""
+    """Wizard Add Track: шаг (kind/profile/route), варианты в E1, шаг и страницы — в FOOT."""
 
     name = "wizard"
     view_attr = "wizard"
 
-    def draw_body(self, fb: FrameBuffer, body: WizardView) -> None:
-        view = body
-        fb.fill_rect(0, BODY_Y0, FRAME_W, BODY_Y1 - BODY_Y0, Colors.BG)
+    def layout(self, view: ScreenView) -> ScreenLayout:
+        """WIZARD: E1 — ``List`` вариантов, FOOT — имя шага и «N/M»."""
+        wizard = view.wizard
+        if wizard is None:
+            return ScreenLayout()
+
         step_label = {
             "kind": "KIND",
             "profile": "PROFILE",
             "route": "ROUTE (PORT)",
-        }.get(view.step, view.step.upper())
-        Label(f"STEP: {step_label}", "sm", Colors.DIM).render(
-            fb, Rect(4, BODY_Y0, 240, _ROW_H)
-        )
-        for i, option in enumerate(view.options):
-            y = BODY_Y0 + 2 * _ROW_H + i * _ROW_H
-            selected = i == view.selected
-            cursor = ">" if selected else " "
-            Label(cursor, "sm", Colors.BPM_LINK if selected else Colors.DIM).render(
-                fb, Rect(4, y, 12, _ROW_H)
-            )
-            Label(option, "sm", Colors.WHITE if selected else Colors.GRAY).render(
-                fb, Rect(20, y, 300, _ROW_H)
-            )
-        if view.page_count > 1:
-            Label(f"{view.page + 1}/{view.page_count}", "sm", Colors.DIM, "r").render(
-                fb, Rect(FRAME_W - 124, BODY_Y0, 120, _ROW_H)
-            )
+        }.get(wizard.step, wizard.step.upper())
+
+        encoders: tuple[SlotItem, ...] = (
+            List("OPTIONS (E1)", wizard.options, index=wizard.selected, rows=5),
+        ) + (Empty(),) * (SLOT_COUNT - 1)
+        foot: tuple[SlotItem, ...] = (
+            Text("STEP", step_label),
+            Text("PAGE", f"{wizard.page + 1}/{wizard.page_count}")
+            if wizard.page_count > 1
+            else Empty(),
+        ) + (Empty(),) * 6
+        return ScreenLayout(encoders=encoders, foot=foot)
+
+    def draw_body(self, fb: FrameBuffer, body: WizardView) -> None:
+        """WIZARD body через Grid-макет."""
+        view = ScreenView(screen=self.name, title="", flash=None, wizard=body)
+        render_layout(fb, self.layout(view))
 
 
-# ── SCALE (корень/лад) ────────────────────────────────────────────────────────
-
-_ROOT_CELL_W = 74  # 12 корней в ряд (12×74 = 888, x 12..900)
-_SCALE_COLS = 4  # лады сеткой 4×2
-_SCALE_CELL_W = 222
-_SCALE_CELL_H = 38
+# ── SCALE (корень/лад) ──────────────────────────────────────────────────────
 
 
 class ScaleScreen(Screen):
-    """SCALE (образец — выбор шкалы Push 2): корни сверху, лады сеткой 4×2."""
+    """SCALE — выбор тональности и лада по образцу экрана Scale Push 2 (Ф5).
+
+    Корни обрамляют сетку ладов: Upper Row 1–6 — восходящие квинты (C G D A E B),
+    Lower Row 1–6 — нисходящие от F (F A# D# G# C# F#). Лады — по одному на слот
+    полосы KNOBS (E1–E8), активный заливкой строки. FOOT — текущая пара.
+    """
 
     name = "scale"
     view_attr = "scale"
 
+    def layout(self, view: ScreenView) -> ScreenLayout:
+        """SCALE: 6 корней сверху и 6 снизу кнопками, 8 ладов в KNOBS, пара в FOOT."""
+        scale = view.scale
+        if scale is None:
+            return ScreenLayout()
+
+        top, bottom = scale_root_rows(scale.roots)
+        current = _active_root(scale)
+        upper: tuple[SlotItem, ...] = tuple(
+            Button(root, active=root == current) for root in top
+        ) + (Empty(),) * (SLOT_COUNT - len(top))
+        lower: tuple[SlotItem, ...] = tuple(
+            Button(root, active=root == current) for root in bottom
+        ) + (Empty(),) * (SLOT_COUNT - len(bottom))
+
+        # Лады: по одному на слот; активный — белой заливкой строки (как в эталоне).
+        scales = scale.scales
+        encoders: tuple[SlotItem, ...] = tuple(
+            Text("", name, font="md", active=i == scale.scale_index)
+            for i, name in enumerate(scales)
+        ) + (Empty(),) * (SLOT_COUNT - len(scales))
+
+        foot: tuple[SlotItem, ...] = (
+            Text("KEY", _active_root(scale), color=Colors.WHITE),
+            Text("SCALE", _active_scale(scale), color=Colors.WHITE),
+        ) + (Empty(),) * (SLOT_COUNT - 2)
+
+        return ScreenLayout(
+            upper=upper[:SLOT_COUNT],
+            encoders=encoders[:SLOT_COUNT],
+            lower=lower[:SLOT_COUNT],
+            foot=foot[:SLOT_COUNT],
+        )
+
     def draw_body(self, fb: FrameBuffer, body: ScaleView) -> None:
-        view = body
-        fb.fill_rect(0, BODY_Y0, FRAME_W, BODY_Y1 - BODY_Y0, Colors.BG)
+        """SCALE body через Grid-макет."""
+        view = ScreenView(screen=self.name, title="", flash=None, scale=body)
+        render_layout(fb, self.layout(view))
 
-        # Ряд корней (заголовки столбцов).
-        y_roots = BODY_Y0 + 2
-        for i, root in enumerate(view.roots):
-            x = 12 + i * _ROOT_CELL_W
-            active = i == view.root_index
-            if active:
-                fb.fill_rect(x - 3, y_roots - 2, _ROOT_CELL_W - 6, 14, Colors.WHITE)
-            Label(root, "sm", Colors.BLACK if active else Colors.GRAY).render(
-                fb, Rect(x, y_roots, _ROOT_CELL_W - 6, 14)
-            )
 
-        # Сетка ладов.
-        y_grid = y_roots + 24
-        for i, scale in enumerate(view.scales):
-            col, row = i % _SCALE_COLS, i // _SCALE_COLS
-            x = 12 + col * _SCALE_CELL_W
-            y = y_grid + row * _SCALE_CELL_H
-            active = i == view.scale_index
-            if active:
-                fb.rect(x - 4, y - 3, _SCALE_CELL_W - 12, 16, Colors.WHITE)
-            Label(scale, "sm", Colors.WHITE if active else Colors.GRAY).render(
-                fb, Rect(x, y, _SCALE_CELL_W - 12, 14)
-            )
+def _active_root(scale: ScaleView) -> str:
+    """Текущая тоника (устойчиво к индексу вне диапазона)."""
+    if not scale.roots:
+        return "—"
+    return scale.roots[scale.root_index % len(scale.roots)]
+
+
+def _active_scale(scale: ScaleView) -> str:
+    """Текущий лад (устойчиво к индексу вне диапазона)."""
+    if not scale.scales:
+        return "—"
+    return scale.scales[scale.scale_index % len(scale.scales)]
 
 
 # ── SETUP (суб-вкладки настроек) ──────────────────────────────────────────────
 
 
 class SetupScreen(Screen):
-    """SETUP: тело активной суб-вкладки + таб-бар внизу body."""
+    """SETUP: E1 — список источников клока (вкладка CLOCK), FOOT — сегментные вкладки.
+
+    Информационные строки вкладки живут справа от слота 0 в полосе KNOBS:
+    слот 0 занят списком источников, остальное место — под текст.
+    """
 
     name = "setup"
     view_attr = "sync"
 
-    def draw_body(self, fb: FrameBuffer, body: SyncView) -> None:
-        view = body
-        fb.fill_rect(0, BODY_Y0, FRAME_W, BODY_Y1 - BODY_Y0, Colors.BG)
-        y0 = BODY_Y0 + 8
+    def layout(self, view: ScreenView) -> ScreenLayout:
+        """SETUP: E1 — List источников клока (только CLOCK), низ — Tabs."""
+        sync = view.sync
+        if sync is None:
+            return ScreenLayout()
 
-        if view.tab == "midi":
-            Label("MIDI CLOCK DEVICE", "sm", Colors.DIM).render(
-                fb, Rect(4, y0, 200, 14)
-            )
-            Label(view.midi_device, "sm", Colors.WHITE).render(
-                fb, Rect(4, y0 + 16, 400, 14)
-            )
-            Label("select: config (sync.midi_clock_device)", "sm", Colors.GRAY).render(
-                fb, Rect(4, y0 + 40, 400, 14)
-            )
-        elif view.tab == "link":
-            Label("ABLETON LINK", "sm", Colors.DIM).render(fb, Rect(4, y0, 200, 14))
-            state = "active" if view.link_active else "off"
-            Label(f"{state}  peers: {view.link_peers}", "sm", Colors.WHITE).render(
-                fb, Rect(4, y0 + 16, 400, 14)
-            )
-            Label(
-                "enable: package abletonlink (sync.clock_source)", "sm", Colors.GRAY
-            ).render(fb, Rect(4, y0 + 40, 400, 14))
-        else:  # clock
-            Label("SOURCE", "sm", Colors.DIM).render(fb, Rect(4, y0, 60, 14))
-            x = 70
-            for source in ("internal", "midi", "link"):
-                active = source == view.source
-                marker = "*" if active else "o"
-                color = Colors.CONNECTED if active else Colors.DIM
-                Label(marker, "sm", color).render(fb, Rect(x, y0, 10, 14))
-                Label(source, "sm", color if active else Colors.GRAY).render(
-                    fb, Rect(x + 10, y0, 90, 14)
-                )
-                x += fb.text_width(source, "sm") + 34
-            if view.pending:
-                Label(f"-> {view.pending}...", "sm", FLASH).render(
-                    fb, Rect(x + 10, y0, 120, 14)
-                )
+        if sync.tab == "clock":
+            sources = sync.sources or ("—",)
+            index = sources.index(sync.source) if sync.source in sources else 0
+            encoders: tuple[SlotItem, ...] = (List("SOURCE (E1)", sources, index=index),)
+        else:
+            encoders = ()
+        encoders += (Empty(),) * (SLOT_COUNT - len(encoders))
 
-            y1 = y0 + 26
-            Label("DEVICE", "sm", Colors.DIM).render(fb, Rect(4, y1, 60, 14))
-            Label(view.midi_device, "sm", Colors.GRAY).render(fb, Rect(70, y1, 400, 14))
-
-            y2 = y1 + 26
-            Label("TEMPO", "sm", Colors.DIM).render(fb, Rect(4, y2, 60, 14))
-            Label(f"{view.bpm:.1f} (local)", "sm", Colors.WHITE).render(
-                fb, Rect(70, y2, 200, 14)
-            )
-
-            y3 = y2 + 26
-            Label("STATUS", "sm", Colors.DIM).render(fb, Rect(4, y3, 60, 14))
-            parts = ["running" if view.running else "stopped"]
-            if view.link_active:
-                parts.append(f"LINK peers {view.link_peers}")
-            Label("  ".join(parts), "sm", Colors.GRAY).render(fb, Rect(70, y3, 320, 14))
-            if view.error:
-                Label(view.error, "sm", FLASH_ERROR).render(fb, Rect(400, y3, 500, 14))
-
-        # Таб-бар внизу body (образец — экран Setup Push standalone).
-        SegmentTabs(view.tabs, active=view.tab).render(
-            fb, Rect(0, BODY_Y1 - 16, FRAME_W, 16)
+        return ScreenLayout(
+            encoders=encoders,
+            tabs=Tabs(sync.tabs, active=sync.tab),
         )
+
+    def draw_body(self, fb: FrameBuffer, body: SyncView) -> None:
+        """SETUP body: Grid-макет + строки активной вкладки справа от слота 0."""
+        view = ScreenView(screen=self.name, title="", flash=None, sync=body)
+        render_layout(fb, self.layout(view))
+
+        # Текст вкладки — в полосе KNOBS, правее слота 0 (списка источников).
+        x = SLOT_W + 8
+        w = FRAME_W - x - 8
+        y = KNOBS_Y0 + 6
+        for label, value, color in self._info_lines(body):
+            Text(label, value, color=color).render(
+                fb, Rect(x, y, w, 16)
+            )
+            y += 18
+
+    @staticmethod
+    def _info_lines(view: SyncView) -> tuple[tuple[str, str, int], ...]:
+        """Строки «метка / значение» для активной суб-вкладки."""
+        if view.tab == "midi":
+            return (
+                ("MIDI CLOCK DEVICE", view.midi_device, Colors.WHITE),
+                ("SET VIA", "config (sync.midi_clock_device)", Colors.GRAY),
+            )
+        if view.tab == "link":
+            state = "active" if view.link_active else "off"
+            return (
+                ("ABLETON LINK", f"{state}  peers: {view.link_peers}", Colors.WHITE),
+                ("ENABLE", "package abletonlink (sync.clock_source)", Colors.GRAY),
+            )
+        lines = [
+            ("DEVICE", view.midi_device, Colors.GRAY),
+            ("TEMPO", f"{view.bpm:.1f} (local)", Colors.WHITE),
+        ]
+        status = ["running" if view.running else "stopped"]
+        if view.link_active:
+            status.append(f"LINK peers {view.link_peers}")
+        lines.append(("STATUS", "  ".join(status), Colors.GRAY))
+        if view.error:
+            lines.append(("ERROR", view.error, FLASH_ERROR))
+        if view.pending:
+            lines.append(("PENDING", f"-> {view.pending}...", FLASH))
+        return tuple(lines)
 
 
 # ── DEMO (образец экрана фреймворка) ──────────────────────────────────────────
 
 
 class DemoScreen(Screen):
-    """DEMO (Note): вкладки сверху и снизу + 8 колонок под энкодерами.
+    """DEMO (Note): эталонный экран Grid-макета (Ф2).
 
-    Образец для новых экранов (D2-8): верхняя полоса — TabStrip с
-    равномерными центрами, середина — ColumnGrid под E1–E8, низ —
-    SegmentTabs на всю ширину. Состояние крутят E1 (верхние вкладки)
-    и E2 (нижние), E3–E8 — значения 0..127 с барами.
-
-    Вертикальная раскладка body (y 36–160): верхние вкладки 36–58,
-    колонки 58–144, нижние вкладки 144–160 — колонки не заходят под
-    таб-бар, иначе TabStrip закрашивает подписи «TOP (E1)»/E3–E8.
+    Верхние вкладки — Button в слотах 0–3 полосы UPPER, нижние — в слотах 0–4
+    полосы LOWER, E1/E2 — ``List`` по вкладкам, E3–E8 — ``Range`` 0..127 с барами.
+    Всё, что выше полосы KNOBS, рисует только :func:`render_layout`.
     """
 
     name = "demo"
     view_attr = "demo"
 
+    def layout(self, view: ScreenView) -> ScreenLayout:
+        """DEMO: верхние вкладки — Button в слотах 0–3, нижние — в 0–4.
+
+        E1/E2 — ``List`` по вкладкам, E3–E8 — ``Range`` 0..127 со значением.
+        Эталонный экран для :func:`render_layout` (Ф2 плана).
+        """
+        demo = view.demo
+        if demo is None or not demo.top_tabs:
+            return ScreenLayout()
+
+        top = demo.top_tabs
+        top_active = demo.top_index % len(top)
+        upper = tuple(
+            Button(tab, active=i == top_active) for i, tab in enumerate(top[:SLOT_COUNT])
+        ) + (Empty(),) * (SLOT_COUNT - len(top[:SLOT_COUNT]))
+
+        bottom = demo.bottom_tabs
+        lower: tuple[SlotItem, ...] = ()
+        if bottom:
+            bottom_active = demo.bottom_index % len(bottom)
+            lower = tuple(
+                Button(tab.upper(), active=i == bottom_active)
+                for i, tab in enumerate(bottom[:SLOT_COUNT])
+            ) + (Empty(),) * (SLOT_COUNT - len(bottom[:SLOT_COUNT]))
+
+        encoders: tuple[SlotItem, ...] = (
+            List("TOP (E1)", top, index=top_active),
+            List("BOTTOM (E2)", bottom, index=demo.bottom_index % len(bottom) if bottom else 0),
+        ) + tuple(
+            Range(f"E{i + 3}", max(0, min(127, value)), 0.0, 127.0)
+            for i, value in enumerate(demo.values[:6])
+        )
+        return ScreenLayout(
+            upper=upper,
+            encoders=encoders + (Empty(),) * (SLOT_COUNT - len(encoders)),
+            lower=lower,
+        )
+
     def draw_body(self, fb: FrameBuffer, body: DemoView) -> None:
-        view = body
-        fb.fill_rect(0, BODY_Y0, FRAME_W, BODY_Y1 - BODY_Y0, Colors.BG)
-        if not view.top_tabs:
-            return  # пустой DTO — тело остаётся фоном (как у Screens для неизвестного экрана)
-
-        # Верхние вкладки: по одной на физический слот (120 px), как кнопки Upper Row.
-        n = len(view.top_tabs)
-        cells = slot_cells(view.top_tabs)
-        active_top = view.top_tabs[view.top_index % n]
-        TabStrip(cells, active=active_top).render(
-            fb, Rect(0, BODY_Y0, FRAME_W, 22)
-        )
-
-        # Середина: восемь колонок под E1–E8 (строго между рядами вкладок).
-        grid = ColumnGrid(y0=DEMO_COLS_Y0, y1=DEMO_COLS_Y1)
-        Column("TOP (E1)", active_top).render(fb, grid.rect(0))
-        Column("BOTTOM (E2)", self._bottom_name(view)).render(fb, grid.rect(1))
-        for i, value in enumerate(view.values[:6]):
-            raw = max(0, min(127, value))
-            Column(f"E{i + 3}", str(raw), raw / 127.0).render(fb, grid.rect(i + 2))
-
-        # Нижние вкладки: равные сегменты (образец — низ экрана Setup).
-        SegmentTabs(view.bottom_tabs, active=self._bottom_name(view)).render(
-            fb, Rect(0, BODY_Y1 - 16, FRAME_W, 16)
-        )
+        """DEMO body через Grid-макет (совместимость со старым путём)."""
+        view = ScreenView(screen=self.name, title="", flash=None, demo=body)
+        render_layout(fb, self.layout(view))
 
     @staticmethod
     def _bottom_name(view: DemoView) -> str:
@@ -494,35 +583,39 @@ class DemoScreen(Screen):
 
 
 class PortsScreen(Screen):
-    """PORTS: список портов (статус цветом) + строка ROUTE."""
+    """PORTS: E1 — выбор дорожки, E2 — выбор порта, список портов — в FOOT."""
 
     name = "ports"
     view_attr = "ports"
 
-    def draw_body(self, fb: FrameBuffer, body: PortsView) -> None:
-        view = body
-        fb.fill_rect(0, BODY_Y0, FRAME_W, BODY_Y1 - BODY_Y0, Colors.BG)
-        for i, row in enumerate(view.rows):
-            y = BODY_Y0 + i * _ROW_H
-            selected = i == view.selected
-            cursor = ">" if selected else " "
-            Label(cursor, "sm", Colors.BPM_LINK if selected else Colors.DIM).render(
-                fb, Rect(4, y, 12, _ROW_H)
-            )
-            Label(row.label, "sm", Colors.WHITE if selected else Colors.GRAY).render(
-                fb, Rect(20, y, 170, _ROW_H)
-            )
-            color = _PORT_STATUS_COLORS.get(row.status, Colors.DIM)
-            Label(row.status, "sm", color).render(fb, Rect(200, y, 150, _ROW_H))
-            Label(row.detail, "sm", Colors.GRAY).render(fb, Rect(360, y, 500, _ROW_H))
+    def layout(self, view: ScreenView) -> ScreenLayout:
+        """PORTS: E1/E2 — List дорожек и портов; ROUTE — в FOOT."""
+        ports = view.ports
+        if ports is None:
+            return ScreenLayout()
 
-        # ROUTE-строка внизу body.
-        y = BODY_Y1 - 16
-        Label("ROUTE", "sm", Colors.DIM).render(fb, Rect(4, y, 60, 14))
-        route = f"{view.route_track} -> " + (
-            f"> {view.route_port}" if view.route_port else "-"
-        )
-        Label(route, "sm", Colors.WHITE).render(fb, Rect(70, y, 500, 14))
+        encoders: tuple[SlotItem, ...] = (
+            List("TRACK (E1)", ports.tracks or ("—",), index=ports.track_index),
+            List(
+                "PORT (E2)",
+                ("—",) + tuple(row.label for row in ports.rows),
+                index=ports.port_index,
+            ),
+        ) + (Empty(),) * (SLOT_COUNT - 2)
+
+        # Статус портов строками в FOOT (по два слота на порт).
+        foot: list[SlotItem] = []
+        for row in ports.rows[:4]:
+            foot.append(Text(row.label, row.status, color=_PORT_STATUS_COLORS.get(row.status, Colors.DIM)))
+        route = f"{ports.route_track} -> " + (f"> {ports.route_port}" if ports.route_port else "-")
+        foot.append(Text("ROUTE", route, color=Colors.WHITE))
+        padded = tuple(foot) + (Empty(),) * (SLOT_COUNT - len(foot))
+        return ScreenLayout(encoders=encoders, foot=padded[:SLOT_COUNT])
+
+    def draw_body(self, fb: FrameBuffer, body: PortsView) -> None:
+        """PORTS body через Grid-макет."""
+        view = ScreenView(screen=self.name, title="", flash=None, ports=body)
+        render_layout(fb, self.layout(view))
 
 
 # ── Реестр и композитор ───────────────────────────────────────────────────────
