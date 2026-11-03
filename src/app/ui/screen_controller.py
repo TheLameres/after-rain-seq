@@ -30,8 +30,14 @@ from typing import TYPE_CHECKING
 from src.app.ui.macro_axes import MacroAxes, MacroAxis
 from src.app.ui.screen_id import ScreenId
 from src.app.ui.ui_event import UiEvent
-from src.app.ui.ui_state import PAGE_SIZE, UiState
+from src.app.ui.ui_state import (
+    DEMO_VALUE_COUNT,
+    DEMO_VALUE_DEFAULT,
+    PAGE_SIZE,
+    UiState,
+)
 from src.devices.display_state import (
+    DemoView,
     PortRowView,
     PortsView,
     ScaleView,
@@ -55,6 +61,7 @@ log = logging.getLogger(__name__)
 # Вкладки переключаются выделенными кнопками (Clip/Device) и Upper Row 5
 # (PORTS) — см. ниже. Upper Row освобождён под будущее (D3+).
 PORTS_BUTTON = "Upper Row 5"  # CC 106 — экран PORTS
+DEMO_BUTTON = "Note"  # CC 50 — демо-экран фреймворка (вкладки сверху/снизу, 8 энкодеров)
 
 # Выделенные кнопки вне табов (переразметка 02.11.2026).
 SESSION_BUTTON = "Session"  # CC 51 — экран TRACKS
@@ -67,6 +74,11 @@ DELETE_BUTTON = "Delete"  # CC 118 — вооружается; + Lower Row уд�
 
 # Суб-вкладки SETUP (заложена возможность расширения настроек).
 SETUP_TABS: tuple[str, ...] = ("clock", "midi", "link")
+
+# DEMO (Note) — демо-экран фреймворка: два ряда вкладок и шесть значений.
+# Верхние вкладки крутит E1, нижние — E2, E3–E8 — значения 0..127.
+DEMO_TOP_TABS: tuple[str, ...] = ("alpha", "beta", "gamma", "delta")
+DEMO_BOTTOM_TABS: tuple[str, ...] = ("osc", "filter", "env", "fx", "mix")
 
 # LED-цвета кнопок (палитра Push 2: 0 off, 122 white, 125 blue,
 # 126 green, 127 red; для белых кнопок значение = яркость).
@@ -250,6 +262,8 @@ class ScreenController:
                 kind=kind,
             )
             return replace(view, wizard=wizard_view)
+        if screen is ScreenId.DEMO:
+            return replace(view, demo=self._demo_view())
         # PORTS
         route_track = self._route_track(snap)
         ports_view = PortsView(
@@ -309,6 +323,9 @@ class ScreenController:
         if name == SETUP_BUTTON:
             self.state.screen = ScreenId.SETUP
             return
+        if name == DEMO_BUTTON:
+            self.state.screen = ScreenId.DEMO
+            return
         if name.startswith(LOWER_ROW_PREFIX):
             self._lower_row_button(name, now, snap)
             return
@@ -329,6 +346,9 @@ class ScreenController:
             return
 
         screen = self.state.screen
+        if screen is ScreenId.DEMO and name in ("Left", "Right", "Up", "Down"):
+            self._demo_nav(name)
+            return
         if name in ("Left", "Right", "Up", "Down") and screen is ScreenId.SCALE:
             self._scale_nav(name, now, snap)
         elif name in ("Up", "Down") and screen is ScreenId.SETUP:
@@ -414,6 +434,8 @@ class ScreenController:
             self._move_cursor(-1, snap)
         elif screen in (ScreenId.SCALE, ScreenId.SETUP, ScreenId.WIZARD):
             pass  # глобальные экраны вне табов: стрелки сюда не ходят
+        elif screen is ScreenId.DEMO:
+            pass  # DEMO вне табов: стрелки заняты вкладками (_demo_nav)
         else:
             self._step_screen(-1)
 
@@ -430,6 +452,8 @@ class ScreenController:
             self._move_cursor(1, snap)
         elif screen in (ScreenId.SCALE, ScreenId.SETUP, ScreenId.WIZARD):
             pass  # глобальные экраны вне табов: стрелки сюда не ходят
+        elif screen is ScreenId.DEMO:
+            pass  # DEMO вне табов: стрелки заняты вкладками (_demo_nav)
         else:
             self._step_screen(1)
 
@@ -576,6 +600,8 @@ class ScreenController:
                 self._sync_encoder(increment, now, snap)
         elif screen is ScreenId.PORTS:
             self._ports_encoder(idx, increment, now, snap)
+        elif screen is ScreenId.DEMO:
+            self._demo_encoder(idx, increment)
         # TRACKS: поворот на пустом слоте — игнор (§4).
 
     def _track_gen_encoder(
@@ -708,6 +734,58 @@ class ScreenController:
                 self._command(self._engine.route_track(track.name, new_port), now)
 
     # ------------------------------------------------------------------
+    # DEMO (Note) — демо-экран фреймворка: E1/E2 листают вкладки, E3–E8 — значения
+    # ------------------------------------------------------------------
+
+    def _demo_view(self) -> DemoView:
+        """Собрать DTO демо-экрана из UiState (индексы всегда в пределах рядов)."""
+        return DemoView(
+            top_tabs=DEMO_TOP_TABS,
+            bottom_tabs=DEMO_BOTTOM_TABS,
+            top_index=self.state.demo_top % len(DEMO_TOP_TABS),
+            bottom_index=self.state.demo_bottom % len(DEMO_BOTTOM_TABS),
+            values=self._demo_values(),
+        )
+
+    def _demo_values(self) -> tuple[int, ...]:
+        """Ровно ``DEMO_VALUE_COUNT`` значений, даже если в state другая длина."""
+        stored = self.state.demo_values
+        return tuple(
+            stored[i] if i < len(stored) else DEMO_VALUE_DEFAULT
+            for i in range(DEMO_VALUE_COUNT)
+        )
+
+    def _demo_nav(self, name: str) -> None:
+        """Стрелки на DEMO: Left/Right — верхние вкладки, Up/Down — нижние."""
+        if name in ("Left", "Right"):
+            inc = 1 if name == "Right" else -1
+            self.state.demo_top = (self.state.demo_top + inc) % len(DEMO_TOP_TABS)
+        else:
+            inc = 1 if name == "Down" else -1
+            self.state.demo_bottom = (
+                self.state.demo_bottom + inc
+            ) % len(DEMO_BOTTOM_TABS)
+
+    def _demo_encoder(self, idx: int, increment: int) -> None:
+        """E1/E2 — вкладки, E3–E8 — значения 0..127 (пишутся только в UiState)."""
+        if idx == 0:
+            self.state.demo_top = (
+                self.state.demo_top + (1 if increment > 0 else -1)
+            ) % len(DEMO_TOP_TABS)
+            return
+        if idx == 1:
+            self.state.demo_bottom = (
+                self.state.demo_bottom + (1 if increment > 0 else -1)
+            ) % len(DEMO_BOTTOM_TABS)
+            return
+        slot = idx - 2
+        if not 0 <= slot < DEMO_VALUE_COUNT:
+            return
+        values = list(self._demo_values())
+        values[slot] = max(0, min(127, values[slot] + increment))
+        self.state.demo_values = tuple(values)
+
+    # ------------------------------------------------------------------
     # LED-подсветка рабочих кнопок (п. 4 запроса 02.11.2026)
     # ------------------------------------------------------------------
 
@@ -724,6 +802,7 @@ class ScreenController:
             DEVICE_BUTTON: LED_WHITE,
             SCALE_BUTTON: LED_WHITE,
             SETUP_BUTTON: LED_WHITE,
+            DEMO_BUTTON: LED_WHITE,
             "Add Track": LED_WHITE,
             "Browse": LED_WHITE,
             "Left": LED_GRAY,
@@ -739,6 +818,7 @@ class ScreenController:
         # Upper Row 5 — PORTS (единственное назначение верхнего ряда;
         # остальные кнопки ряда освобождены под будущее и не подсвечиваются).
         states[PORTS_BUTTON] = LED_WHITE if state.screen is ScreenId.PORTS else LED_GRAY
+        states[DEMO_BUTTON] = LED_GREEN if state.screen is ScreenId.DEMO else LED_GRAY
         start = state.page * PAGE_SIZE
         for i in range(PAGE_SIZE):
             if start + i < len(snap.tracks):
@@ -794,6 +874,8 @@ class ScreenController:
             if self.state.wizard_kind == "profile":
                 return "ADD TRACK: PROFILE"
             return "ADD TRACK: ROUTE"
+        if screen is ScreenId.DEMO:
+            return "DEMO: FRAMEWORK"
         return "PORTS"
 
     def _track_rows(self, snap: StatusSnapshot) -> tuple[TrackRowView, ...]:

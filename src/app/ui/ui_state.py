@@ -12,6 +12,8 @@ from src.app.ui.screen_id import ScreenId
 
 DEFAULT_FLASH_SECONDS = 3.0
 PAGE_SIZE = 8  # дорожек на странице экрана TRACKS
+DEMO_VALUE_COUNT = 6  # энкодеры E3–E8 демо-экрана (0..127)
+DEMO_VALUE_DEFAULT = 64  # старт посередине — бары видны сразу
 
 
 @dataclass
@@ -50,6 +52,9 @@ class UiState:
     wizard_profile: str | None = None
     setup_tab: int = 0  # активная суб-вкладка SETUP (индекс в SETUP_TABS)
     delete_armed: bool = False  # Delete вооружён: следующий LOWER ROW удалит
+    demo_top: int = 0  # DEMO: активная верхняя вкладка (E1)
+    demo_bottom: int = 0  # DEMO: активная нижняя вкладка (E2)
+    demo_values: tuple[int, ...] = (DEMO_VALUE_DEFAULT,) * DEMO_VALUE_COUNT
 
     def flash(self, text: str, now: float, ttl: float = DEFAULT_FLASH_SECONDS) -> None:
         """Показать transient-сообщение до ``now + ttl`` (не блокирует UI)."""

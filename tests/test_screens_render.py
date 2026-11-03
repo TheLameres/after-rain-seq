@@ -9,6 +9,7 @@ from __future__ import annotations
 import numpy
 
 from src.devices.display_state import (
+    DemoView,
     PortRowView,
     PortsView,
     ScaleView,
@@ -23,6 +24,11 @@ from src.devices.push2.renderer import FRAME_W, Colors, FrameBuffer
 from src.devices.push2.screens import (
     BODY_Y0,
     BODY_Y1,
+    COL_W,
+    DEMO_BOTTOM_H,
+    DEMO_COLS_Y0,
+    DEMO_TABS_H,
+    draw_demo,
     draw_header,
     draw_ports,
     draw_scale,
@@ -34,6 +40,7 @@ from src.devices.push2.screens import (
     draw_wizard,
 )
 from src.devices.push2.track_colors import track_color
+from src.devices.push2.widgets import SLOT_W
 
 
 def make_fb() -> FrameBuffer:
@@ -432,3 +439,69 @@ class TestDrawWizard:
         draw_wizard(fb, view)
         # Индикатор страницы «2/2» в правом верхнем углу body.
         assert non_bg_count(fb, FRAME_W - 130, BODY_Y0, 120, 14) > 3
+
+
+def demo_view(
+    top_index: int = 0,
+    bottom_index: int = 0,
+    values: tuple[int, ...] = (0, 32, 64, 96, 127, 10),
+) -> DemoView:
+    return DemoView(
+        top_tabs=("alpha", "beta", "gamma", "delta"),
+        bottom_tabs=("osc", "filter", "env", "fx", "mix"),
+        top_index=top_index,
+        bottom_index=bottom_index,
+        values=values,
+    )
+
+
+class TestDemoScreenRender:
+    def test_top_tabs_row(self) -> None:
+        fb = make_fb()
+        draw_demo(fb, demo_view())
+        # Полоса верхних вкладок начинается сразу под заголовком.
+        assert non_bg_count(fb, 0, BODY_Y0, FRAME_W, DEMO_TABS_H) > 10
+
+    def test_active_top_tab_is_white(self) -> None:
+        fb = make_fb()
+        draw_demo(fb, demo_view(top_index=2))  # gamma
+        # Активная вкладка занимает свой физический слот SLOT_W (120 px):
+        # gamma — индекс 2 → x 240..360, как кнопка Upper Row 3.
+        assert color_count(fb, Colors.WHITE, 2 * SLOT_W, BODY_Y0, SLOT_W, DEMO_TABS_H) > 50
+
+    def test_columns_do_not_bleed_into_tab_rows(self) -> None:
+        """Колонки живут строго между рядами вкладок — иначе TabStrip
+        закрашивает подписи колонок (было: body TabStrip 22 px поверх Column)."""
+        fb = make_fb()
+        draw_demo(fb, demo_view())
+        # В полосе верхних вкладок не должно быть текста колонок ниже их низа:
+        # проверяем, что область колонок начинается не раньше DEMO_COLS_Y0.
+        assert DEMO_COLS_Y0 >= BODY_Y0 + DEMO_TABS_H
+        # Нижний ряд вкладок отрисован отдельной полосой.
+        assert non_bg_count(
+            fb, 0, BODY_Y1 - DEMO_BOTTOM_H, FRAME_W, DEMO_BOTTOM_H
+        ) > 10
+
+    def test_values_render_as_numbers_and_bars(self) -> None:
+        fb = make_fb()
+        draw_demo(fb, demo_view(values=(127, 0, 64, 32, 96, 10)))
+        # Число значения + бар в колонке E3.
+        assert non_bg_count(fb, COL_W * 2, DEMO_COLS_Y0, COL_W, 50) > 5
+        # Бар рисуется только когда frac задан и > 0: колонка E4 (value=0)
+        # содержит число, но бар нулевой — фон бара закрашивается отдельно.
+        assert (
+            color_count(fb, Colors.TRACK_FILL, COL_W * 3, DEMO_COLS_Y0, COL_W, 60)
+            == 0
+        )
+
+    def test_empty_tabs_do_not_crash(self) -> None:
+        fb = make_fb()
+        view = DemoView(
+            top_tabs=(),
+            bottom_tabs=(),
+            top_index=0,
+            bottom_index=0,
+            values=(0, 0, 0, 0, 0, 0),
+        )
+        draw_demo(fb, view)  # не должно быть ZeroDivisionError / IndexError
+        assert non_bg_count(fb, 0, BODY_Y0, FRAME_W, BODY_Y1 - BODY_Y0) == 0

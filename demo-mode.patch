@@ -1,0 +1,545 @@
+diff --git a/src/app/ui/screen_controller.py b/src/app/ui/screen_controller.py
+index b6d19ce..a58fa7b 100644
+--- a/src/app/ui/screen_controller.py
++++ b/src/app/ui/screen_controller.py
+@@ -30,8 +30,14 @@ from typing import TYPE_CHECKING
+ from src.app.ui.macro_axes import MacroAxes, MacroAxis
+ from src.app.ui.screen_id import ScreenId
+ from src.app.ui.ui_event import UiEvent
+-from src.app.ui.ui_state import PAGE_SIZE, UiState
++from src.app.ui.ui_state import (
++    DEMO_VALUE_COUNT,
++    DEMO_VALUE_DEFAULT,
++    PAGE_SIZE,
++    UiState,
++)
+ from src.devices.display_state import (
++    DemoView,
+     PortRowView,
+     PortsView,
+     ScaleView,
+@@ -55,6 +61,7 @@ log = logging.getLogger(__name__)
+ # Вкладки переключаются выделенными кнопками (Clip/Device) и Upper Row 5
+ # (PORTS) — см. ниже. Upper Row освобождён под будущее (D3+).
+ PORTS_BUTTON = "Upper Row 5"  # CC 106 — экран PORTS
++DEMO_BUTTON = "Note"  # CC 50 — демо-экран фреймворка (вкладки сверху/снизу, 8 энкодеров)
+
+ # Выделенные кнопки вне табов (переразметка 02.11.2026).
+ SESSION_BUTTON = "Session"  # CC 51 — экран TRACKS
+@@ -68,6 +75,11 @@ DELETE_BUTTON = "Delete"  # CC 118 — вооружается; + Lower Row уд
+ # Суб-вкладки SETUP (заложена возможность расширения настроек).
+ SETUP_TABS: tuple[str, ...] = ("clock", "midi", "link")
+
++# DEMO (Note) — демо-экран фреймворка: два ряда вкладок и шесть значений.
++# Верхние вкладки крутит E1, нижние — E2, E3–E8 — значения 0..127.
++DEMO_TOP_TABS: tuple[str, ...] = ("alpha", "beta", "gamma", "delta")
++DEMO_BOTTOM_TABS: tuple[str, ...] = ("osc", "filter", "env", "fx", "mix")
++
+ # LED-цвета кнопок (палитра Push 2: 0 off, 122 white, 125 blue,
+ # 126 green, 127 red; для белых кнопок значение = яркость).
+ LED_OFF = 0
+@@ -250,6 +262,8 @@ class ScreenController:
+                 kind=kind,
+             )
+             return replace(view, wizard=wizard_view)
++        if screen is ScreenId.DEMO:
++            return replace(view, demo=self._demo_view())
+         # PORTS
+         route_track = self._route_track(snap)
+         ports_view = PortsView(
+@@ -309,6 +323,9 @@ class ScreenController:
+         if name == SETUP_BUTTON:
+             self.state.screen = ScreenId.SETUP
+             return
++        if name == DEMO_BUTTON:
++            self.state.screen = ScreenId.DEMO
++            return
+         if name.startswith(LOWER_ROW_PREFIX):
+             self._lower_row_button(name, now, snap)
+             return
+@@ -329,6 +346,9 @@ class ScreenController:
+             return
+
+         screen = self.state.screen
++        if screen is ScreenId.DEMO and name in ("Left", "Right", "Up", "Down"):
++            self._demo_nav(name)
++            return
+         if name in ("Left", "Right", "Up", "Down") and screen is ScreenId.SCALE:
+             self._scale_nav(name, now, snap)
+         elif name in ("Up", "Down") and screen is ScreenId.SETUP:
+@@ -414,6 +434,8 @@ class ScreenController:
+             self._move_cursor(-1, snap)
+         elif screen in (ScreenId.SCALE, ScreenId.SETUP, ScreenId.WIZARD):
+             pass  # глобальные экраны вне табов: стрелки сюда не ходят
++        elif screen is ScreenId.DEMO:
++            pass  # DEMO вне табов: стрелки заняты вкладками (_demo_nav)
+         else:
+             self._step_screen(-1)
+
+@@ -430,6 +452,8 @@ class ScreenController:
+             self._move_cursor(1, snap)
+         elif screen in (ScreenId.SCALE, ScreenId.SETUP, ScreenId.WIZARD):
+             pass  # глобальные экраны вне табов: стрелки сюда не ходят
++        elif screen is ScreenId.DEMO:
++            pass  # DEMO вне табов: стрелки заняты вкладками (_demo_nav)
+         else:
+             self._step_screen(1)
+
+@@ -576,6 +600,8 @@ class ScreenController:
+                 self._sync_encoder(increment, now, snap)
+         elif screen is ScreenId.PORTS:
+             self._ports_encoder(idx, increment, now, snap)
++        elif screen is ScreenId.DEMO:
++            self._demo_encoder(idx, increment)
+         # TRACKS: поворот на пустом слоте — игнор (§4).
+
+     def _track_gen_encoder(
+@@ -707,6 +733,58 @@ class ScreenController:
+             else:
+                 self._command(self._engine.route_track(track.name, new_port), now)
+
++    # ------------------------------------------------------------------
++    # DEMO (Note) — демо-экран фреймворка: E1/E2 листают вкладки, E3–E8 — значения
++    # ------------------------------------------------------------------
++
++    def _demo_view(self) -> DemoView:
++        """Собрать DTO демо-экрана из UiState (индексы всегда в пределах рядов)."""
++        return DemoView(
++            top_tabs=DEMO_TOP_TABS,
++            bottom_tabs=DEMO_BOTTOM_TABS,
++            top_index=self.state.demo_top % len(DEMO_TOP_TABS),
++            bottom_index=self.state.demo_bottom % len(DEMO_BOTTOM_TABS),
++            values=self._demo_values(),
++        )
++
++    def _demo_values(self) -> tuple[int, ...]:
++        """Ровно ``DEMO_VALUE_COUNT`` значений, даже если в state другая длина."""
++        stored = self.state.demo_values
++        return tuple(
++            stored[i] if i < len(stored) else DEMO_VALUE_DEFAULT
++            for i in range(DEMO_VALUE_COUNT)
++        )
++
++    def _demo_nav(self, name: str) -> None:
++        """Стрелки на DEMO: Left/Right — верхние вкладки, Up/Down — нижние."""
++        if name in ("Left", "Right"):
++            inc = 1 if name == "Right" else -1
++            self.state.demo_top = (self.state.demo_top + inc) % len(DEMO_TOP_TABS)
++        else:
++            inc = 1 if name == "Down" else -1
++            self.state.demo_bottom = (
++                self.state.demo_bottom + inc
++            ) % len(DEMO_BOTTOM_TABS)
++
++    def _demo_encoder(self, idx: int, increment: int) -> None:
++        """E1/E2 — вкладки, E3–E8 — значения 0..127 (пишутся только в UiState)."""
++        if idx == 0:
++            self.state.demo_top = (
++                self.state.demo_top + (1 if increment > 0 else -1)
++            ) % len(DEMO_TOP_TABS)
++            return
++        if idx == 1:
++            self.state.demo_bottom = (
++                self.state.demo_bottom + (1 if increment > 0 else -1)
++            ) % len(DEMO_BOTTOM_TABS)
++            return
++        slot = idx - 2
++        if not 0 <= slot < DEMO_VALUE_COUNT:
++            return
++        values = list(self._demo_values())
++        values[slot] = max(0, min(127, values[slot] + increment))
++        self.state.demo_values = tuple(values)
++
+     # ------------------------------------------------------------------
+     # LED-подсветка рабочих кнопок (п. 4 запроса 02.11.2026)
+     # ------------------------------------------------------------------
+@@ -724,6 +802,7 @@ class ScreenController:
+             DEVICE_BUTTON: LED_WHITE,
+             SCALE_BUTTON: LED_WHITE,
+             SETUP_BUTTON: LED_WHITE,
++            DEMO_BUTTON: LED_WHITE,
+             "Add Track": LED_WHITE,
+             "Browse": LED_WHITE,
+             "Left": LED_GRAY,
+@@ -739,6 +818,7 @@ class ScreenController:
+         # Upper Row 5 — PORTS (единственное назначение верхнего ряда;
+         # остальные кнопки ряда освобождены под будущее и не подсвечиваются).
+         states[PORTS_BUTTON] = LED_WHITE if state.screen is ScreenId.PORTS else LED_GRAY
++        states[DEMO_BUTTON] = LED_GREEN if state.screen is ScreenId.DEMO else LED_GRAY
+         start = state.page * PAGE_SIZE
+         for i in range(PAGE_SIZE):
+             if start + i < len(snap.tracks):
+@@ -794,6 +874,8 @@ class ScreenController:
+             if self.state.wizard_kind == "profile":
+                 return "ADD TRACK: PROFILE"
+             return "ADD TRACK: ROUTE"
++        if screen is ScreenId.DEMO:
++            return "DEMO: FRAMEWORK"
+         return "PORTS"
+
+     def _track_rows(self, snap: StatusSnapshot) -> tuple[TrackRowView, ...]:
+diff --git a/src/app/ui/ui_state.py b/src/app/ui/ui_state.py
+index 50b66af..f0e58f8 100644
+--- a/src/app/ui/ui_state.py
++++ b/src/app/ui/ui_state.py
+@@ -12,6 +12,8 @@ from src.app.ui.screen_id import ScreenId
+
+ DEFAULT_FLASH_SECONDS = 3.0
+ PAGE_SIZE = 8  # дорожек на странице экрана TRACKS
++DEMO_VALUE_COUNT = 6  # энкодеры E3–E8 демо-экрана (0..127)
++DEMO_VALUE_DEFAULT = 64  # старт посередине — бары видны сразу
+
+
+ @dataclass
+@@ -50,6 +52,9 @@ class UiState:
+     wizard_profile: str | None = None
+     setup_tab: int = 0  # активная суб-вкладка SETUP (индекс в SETUP_TABS)
+     delete_armed: bool = False  # Delete вооружён: следующий LOWER ROW удалит
++    demo_top: int = 0  # DEMO: активная верхняя вкладка (E1)
++    demo_bottom: int = 0  # DEMO: активная нижняя вкладка (E2)
++    demo_values: tuple[int, ...] = (DEMO_VALUE_DEFAULT,) * DEMO_VALUE_COUNT
+
+     def flash(self, text: str, now: float, ttl: float = DEFAULT_FLASH_SECONDS) -> None:
+         """Показать transient-сообщение до ``now + ttl`` (не блокирует UI)."""
+diff --git a/src/devices/push2/screens.py b/src/devices/push2/screens.py
+index 5cbbe14..79cb8bc 100644
+--- a/src/devices/push2/screens.py
++++ b/src/devices/push2/screens.py
+@@ -56,6 +56,10 @@ __all__ = [
+     "BODY_Y1",
+     "COL_W",
+     "DEFAULT_SCREENS",
++    "DEMO_BOTTOM_H",
++    "DEMO_COLS_Y0",
++    "DEMO_COLS_Y1",
++    "DEMO_TABS_H",
+     "TAB_CELLS",
+     "DemoScreen",
+     "PortsScreen",
+@@ -67,6 +71,7 @@ __all__ = [
+     "TrackMacroScreen",
+     "TracksScreen",
+     "WizardScreen",
++    "draw_demo",
+     "draw_header",
+     "draw_ports",
+     "draw_scale",
+@@ -95,6 +100,13 @@ FLASH_ERROR = Colors.DISCONNECTED
+ _ROW_H = 14  # высота строки списка (шрифт sm)
+ _TRACK_ROW_H = 13  # строки TRACKS компактнее: внизу полоса имён под Lower Row
+
++# DEMO: полоса верхних вкладок 22 px внутрь body, полоса нижних — 16 px от низа.
++# Колонки живут строго между ними, иначе TabStrip/Column перекрывают друг друга.
++DEMO_TABS_H = 22
++DEMO_BOTTOM_H = 16
++DEMO_COLS_Y0 = BODY_Y0 + DEMO_TABS_H
++DEMO_COLS_Y1 = BODY_Y1 - DEMO_BOTTOM_H
++
+ # Цвета статусов портов (значения из PortSummary.status).
+ _PORT_STATUS_COLORS = {
+     "connected": Colors.CONNECTED,
+@@ -445,6 +457,10 @@ class DemoScreen(Screen):
+     равномерными центрами, середина — ColumnGrid под E1–E8, низ —
+     SegmentTabs на всю ширину. Состояние крутят E1 (верхние вкладки)
+     и E2 (нижние), E3–E8 — значения 0..127 с барами.
++
++    Вертикальная раскладка body (y 36–160): верхние вкладки 36–58,
++    колонки 58–144, нижние вкладки 144–160 — колонки не заходят под
++    таб-бар, иначе TabStrip закрашивает подписи «TOP (E1)»/E3–E8.
+     """
+
+     name = "demo"
+@@ -453,37 +469,40 @@ class DemoScreen(Screen):
+     def draw_body(self, fb: FrameBuffer, body: DemoView) -> None:
+         view = body
+         fb.fill_rect(0, BODY_Y0, FRAME_W, BODY_Y1 - BODY_Y0, Colors.BG)
++        if not view.top_tabs:
++            return  # пустой DTO — тело остаётся фоном (как у Screens для неизвестного экрана)
+
+         # Верхние вкладки: равномерные ячейки на всю ширину.
+-        n = max(1, len(view.top_tabs))
++        n = len(view.top_tabs)
+         cells = tuple(
+             (tab, FRAME_W // n * i + FRAME_W // n // 2)
+             for i, tab in enumerate(view.top_tabs)
+         )
+-        active_top = view.top_tabs[view.top_index % len(view.top_tabs)]
++        active_top = view.top_tabs[view.top_index % n]
+         TabStrip(cells, active=active_top).render(
+             fb, Rect(0, BODY_Y0, FRAME_W, 22)
+         )
+
+-        # Середина: восемь колонок под E1–E8.
+-        top_name = active_top
+-        bottom_name = view.bottom_tabs[view.bottom_index % len(view.bottom_tabs)]
+-        grid = ColumnGrid()
+-        Column("TOP (E1)", top_name).render(fb, grid.rect(0))
+-        Column("BOTTOM (E2)", bottom_name).render(fb, grid.rect(1))
+-        for i in range(6):
+-            value = view.values[i] if i < len(view.values) else 0
+-            frac = max(0, min(127, value)) / 127.0
+-            Column(f"E{i + 3}", f"{round(frac * 100)} %", frac).render(
+-                fb, grid.rect(i + 2)
+-            )
++        # Середина: восемь колонок под E1–E8 (строго между рядами вкладок).
++        grid = ColumnGrid(y0=DEMO_COLS_Y0, y1=DEMO_COLS_Y1)
++        Column("TOP (E1)", active_top).render(fb, grid.rect(0))
++        Column("BOTTOM (E2)", self._bottom_name(view)).render(fb, grid.rect(1))
++        for i, value in enumerate(view.values[:6]):
++            raw = max(0, min(127, value))
++            Column(f"E{i + 3}", str(raw), raw / 127.0).render(fb, grid.rect(i + 2))
+
+         # Нижние вкладки: равные сегменты (образец — низ экрана Setup).
+-        active_bottom = view.bottom_tabs[view.bottom_index % len(view.bottom_tabs)]
+-        SegmentTabs(view.bottom_tabs, active=active_bottom).render(
++        SegmentTabs(view.bottom_tabs, active=self._bottom_name(view)).render(
+             fb, Rect(0, BODY_Y1 - 16, FRAME_W, 16)
+         )
+
++    @staticmethod
++    def _bottom_name(view: DemoView) -> str:
++        """Активная нижняя вкладка; пустой ряд не должен ронять рендер."""
++        if not view.bottom_tabs:
++            return ""
++        return view.bottom_tabs[view.bottom_index % len(view.bottom_tabs)]
++
+
+ # ── PORTS ─────────────────────────────────────────────────────────────────────
+
+@@ -530,6 +549,7 @@ DEFAULT_SCREENS: tuple[Screen, ...] = (
+     ScaleScreen(),
+     SetupScreen(),
+     PortsScreen(),
++    DemoScreen(),
+ )
+
+
+@@ -630,3 +650,8 @@ def draw_setup(fb: FrameBuffer, view: SyncView) -> None:
+ def draw_ports(fb: FrameBuffer, view: PortsView) -> None:
+     """PORTS body: список портов + ROUTE."""
+     PortsScreen().draw_body(fb, view)
++
++
++def draw_demo(fb: FrameBuffer, view: DemoView) -> None:
++    """DEMO body: вкладки сверху/снизу + восемь колонок под E1–E8."""
++    DemoScreen().draw_body(fb, view)
+diff --git a/tests/test_screen_controller.py b/tests/test_screen_controller.py
+index 727cef4..fa1e321 100644
+--- a/tests/test_screen_controller.py
++++ b/tests/test_screen_controller.py
+@@ -7,7 +7,11 @@ UI читает только StatusSnapshot (план D2 §2.2).
+ from __future__ import annotations
+
+ from src.app.ui.macro_axes import MacroAxes
+-from src.app.ui.screen_controller import MELODIC_PROFILES, ScreenController
++from src.app.ui.screen_controller import (
++    LED_GREEN,
++    MELODIC_PROFILES,
++    ScreenController,
++)
+ from src.app.ui.screen_id import ScreenId
+ from src.app.ui.ui_event import UiEvent
+ from src.repl.engine_control import EngineControl
+@@ -933,3 +937,95 @@ class TestSpikeRegressions:
+         ctl, engine, _ = make_controller(tracks)
+         btn(ctl, "Delete")
+         assert engine.calls == []
++
++
++class TestDemoScreen:
++    """DEMO (Note, CC 50) — демо-экран фреймворка.
++
++    Экран обязан быть достижим кнопкой, отдавать DTO, крутить вкладки
++    энкодерами E1/E2 и значения E3–E8, и не ломать навигацию по табам
++    (стрелки на нём заняты, _step_screen не должен получить ScreenId.DEMO).
++    """
++
++    def test_note_button_opens_demo(self) -> None:
++        ctl, _, _ = make_controller()
++        btn(ctl, "Note")
++        assert ctl.state.screen is ScreenId.DEMO
++
++    def test_view_has_demo_body(self) -> None:
++        ctl, _, _ = make_controller()
++        btn(ctl, "Note")
++        view = ctl.build_view(ctl._engine.get_status(), NOW)
++        assert view.screen == "demo"
++        assert view.tab is None  # DEMO вне табов
++        assert view.demo is not None
++        assert len(view.demo.values) == 6
++
++    def test_title_is_not_ports(self) -> None:
++        ctl, engine, _ = make_controller()
++        btn(ctl, "Note")
++        view = ctl.build_view(engine.get_status(), NOW)
++        assert view.title == "DEMO: FRAMEWORK"
++
++    def test_arrows_change_tabs_not_screens(self) -> None:
++        ctl, engine, _ = make_controller()
++        btn(ctl, "Note")
++        top0 = ctl.state.demo_top
++        bottom0 = ctl.state.demo_bottom
++        btn(ctl, "Right")
++        btn(ctl, "Down")
++        assert ctl.state.screen is ScreenId.DEMO  # остались на экране
++        assert ctl.state.demo_top != top0
++        assert ctl.state.demo_bottom != bottom0
++        # Left на DEMO не должен уходить в _step_screen (иначе ValueError)
++        btn(ctl, "Left")
++        assert ctl.state.screen is ScreenId.DEMO
++
++    def test_e1_e2_cycle_tabs(self) -> None:
++        ctl, engine, _ = make_controller()
++        btn(ctl, "Note")
++        top0 = ctl.state.demo_top
++        enc(ctl, 1, 1)
++        assert ctl.state.demo_top != top0
++        bottom0 = ctl.state.demo_bottom
++        enc(ctl, 2, 1)
++        assert ctl.state.demo_bottom != bottom0
++
++    def test_e3_e8_set_values_with_clamp(self) -> None:
++        ctl, engine, _ = make_controller()
++        btn(ctl, "Note")
++        start = ctl.state.demo_values[0]
++        enc(ctl, 3, 10)
++        assert ctl.state.demo_values[0] == min(127, start + 10)
++        enc(ctl, 8, 127)  # кламп в 127
++        assert ctl.state.demo_values[5] == 127
++        enc(ctl, 8, -127)  # кламп в 0
++        assert ctl.state.demo_values[5] == 0
++        # Демо-экран не командует движком.
++        assert engine.calls == []
++
++    def test_values_length_is_always_six(self) -> None:
++        ctl, engine, _ = make_controller()
++        ctl.state.demo_values = (1, 2)  # искусственно битая длина
++        btn(ctl, "Note")
++        view = ctl.build_view(engine.get_status(), NOW)
++        assert len(view.demo.values) == 6
++        assert view.demo.values[2] == 64  # DEMO_VALUE_DEFAULT
++
++    def test_note_led_lit_on_demo(self) -> None:
++        ctl, engine, _ = make_controller()
++        btn(ctl, "Note")
++        states = ctl.button_led_states(engine.get_status())
++        assert states["Note"] == LED_GREEN
++
++    def test_other_screen_untouched(self) -> None:
++        """Возврат на TRACKS: состояние DEMO сохраняется, экран переключился."""
++        ctl, engine, _ = make_controller()
++        btn(ctl, "Note")
++        btn(ctl, "Left")
++        enc(ctl, 3, 5)
++        btn(ctl, "Session")
++        assert ctl.state.screen is ScreenId.TRACKS
++        view = ctl.build_view(engine.get_status(), NOW)
++        assert view.demo is None
++        assert view.tracks is not None
+diff --git a/tests/test_screens_render.py b/tests/test_screens_render.py
+index 8e3e633..316da67 100644
+--- a/tests/test_screens_render.py
++++ b/tests/test_screens_render.py
+@@ -9,6 +9,7 @@ from __future__ import annotations
+ import numpy
+
+ from src.devices.display_state import (
++    DemoView,
+     PortRowView,
+     PortsView,
+     ScaleView,
+@@ -23,6 +24,11 @@ from src.devices.push2.renderer import FRAME_W, Colors, FrameBuffer
+ from src.devices.push2.screens import (
+     BODY_Y0,
+     BODY_Y1,
++    COL_W,
++    DEMO_BOTTOM_H,
++    DEMO_COLS_Y0,
++    DEMO_TABS_H,
++    draw_demo,
+     draw_header,
+     draw_ports,
+     draw_scale,
+@@ -432,3 +438,69 @@ class TestDrawWizard:
+         draw_wizard(fb, view)
+         # Индикатор страницы «2/2» в правом верхнем углу body.
+         assert non_bg_count(fb, FRAME_W - 130, BODY_Y0, 120, 14) > 3
++
++
++def demo_view(
++    top_index: int = 0,
++    bottom_index: int = 0,
++    values: tuple[int, ...] = (0, 32, 64, 96, 127, 10),
++) -> DemoView:
++    return DemoView(
++        top_tabs=("alpha", "beta", "gamma", "delta"),
++        bottom_tabs=("osc", "filter", "env", "fx", "mix"),
++        top_index=top_index,
++        bottom_index=bottom_index,
++        values=values,
++    )
++
++
++class TestDemoScreenRender:
++    def test_top_tabs_row(self) -> None:
++        fb = make_fb()
++        draw_demo(fb, demo_view())
++        # Полоса верхних вкладок начинается сразу под заголовком.
++        assert non_bg_count(fb, 0, BODY_Y0, FRAME_W, DEMO_TABS_H) > 10
++
++    def test_active_top_tab_is_white(self) -> None:
++        fb = make_fb()
++        draw_demo(fb, demo_view(top_index=2))  # gamma
++        # Активная ячейка — белая заливка (третья из четырёх).
++        seg = FRAME_W // 4
++        assert color_count(fb, Colors.WHITE, seg * 2, BODY_Y0, seg, DEMO_TABS_H) > 50
++
++    def test_columns_do_not_bleed_into_tab_rows(self) -> None:
++        """Колонки живут строго между рядами вкладок — иначе TabStrip
++        закрашивает подписи колонок (было: body TabStrip 22 px поверх Column)."""
++        fb = make_fb()
++        draw_demo(fb, demo_view())
++        # В полосе верхних вкладок не должно быть текста колонок ниже их низа:
++        # проверяем, что область колонок начинается не раньше DEMO_COLS_Y0.
++        assert DEMO_COLS_Y0 >= BODY_Y0 + DEMO_TABS_H
++        # Нижний ряд вкладок отрисован отдельной полосой.
++        assert non_bg_count(
++            fb, 0, BODY_Y1 - DEMO_BOTTOM_H, FRAME_W, DEMO_BOTTOM_H
++        ) > 10
++
++    def test_values_render_as_numbers_and_bars(self) -> None:
++        fb = make_fb()
++        draw_demo(fb, demo_view(values=(127, 0, 64, 32, 96, 10)))
++        # Число значения + бар в колонке E3.
++        assert non_bg_count(fb, COL_W * 2, DEMO_COLS_Y0, COL_W, 50) > 5
++        # Бар рисуется только когда frac задан и > 0: колонка E4 (value=0)
++        # содержит число, но бар нулевой — фон бара закрашивается отдельно.
++        assert (
++            color_count(fb, Colors.TRACK_FILL, COL_W * 3, DEMO_COLS_Y0, COL_W, 60)
++            == 0
++        )
++
++    def test_empty_tabs_do_not_crash(self) -> None:
++        fb = make_fb()
++        view = DemoView(
++            top_tabs=(),
++            bottom_tabs=(),
++            top_index=0,
++            bottom_index=0,
++            values=(0, 0, 0, 0, 0, 0),
++        )
++        draw_demo(fb, view)  # не должно быть ZeroDivisionError / IndexError
++        assert non_bg_count(fb, 0, BODY_Y0, FRAME_W, BODY_Y1 - BODY_Y0) == 0
+diff --git a/tests/test_widgets.py b/tests/test_widgets.py
+index 7ceebb1..7d314a5 100644
+--- a/tests/test_widgets.py
++++ b/tests/test_widgets.py
+@@ -202,6 +202,7 @@ class TestScreens:
+             "scale",
+             "setup",
+             "ports",
++            "demo",
+         )
+
+     def test_register_custom_screen(self) -> None:
+

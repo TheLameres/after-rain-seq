@@ -7,7 +7,11 @@ UI читает только StatusSnapshot (план D2 §2.2).
 from __future__ import annotations
 
 from src.app.ui.macro_axes import MacroAxes
-from src.app.ui.screen_controller import MELODIC_PROFILES, ScreenController
+from src.app.ui.screen_controller import (
+    LED_GREEN,
+    MELODIC_PROFILES,
+    ScreenController,
+)
 from src.app.ui.screen_id import ScreenId
 from src.app.ui.ui_event import UiEvent
 from src.repl.engine_control import EngineControl
@@ -933,3 +937,95 @@ class TestSpikeRegressions:
         ctl, engine, _ = make_controller(tracks)
         btn(ctl, "Delete")
         assert engine.calls == []
+
+
+class TestDemoScreen:
+    """DEMO (Note, CC 50) — демо-экран фреймворка.
+
+    Экран обязан быть достижим кнопкой, отдавать DTO, крутить вкладки
+    энкодерами E1/E2 и значения E3–E8, и не ломать навигацию по табам
+    (стрелки на нём заняты, _step_screen не должен получить ScreenId.DEMO).
+    """
+
+    def test_note_button_opens_demo(self) -> None:
+        ctl, _, _ = make_controller()
+        btn(ctl, "Note")
+        assert ctl.state.screen is ScreenId.DEMO
+
+    def test_view_has_demo_body(self) -> None:
+        ctl, _, _ = make_controller()
+        btn(ctl, "Note")
+        view = ctl.build_view(ctl._engine.get_status(), NOW)
+        assert view.screen == "demo"
+        assert view.tab is None  # DEMO вне табов
+        assert view.demo is not None
+        assert len(view.demo.values) == 6
+
+    def test_title_is_not_ports(self) -> None:
+        ctl, engine, _ = make_controller()
+        btn(ctl, "Note")
+        view = ctl.build_view(engine.get_status(), NOW)
+        assert view.title == "DEMO: FRAMEWORK"
+
+    def test_arrows_change_tabs_not_screens(self) -> None:
+        ctl, engine, _ = make_controller()
+        btn(ctl, "Note")
+        top0 = ctl.state.demo_top
+        bottom0 = ctl.state.demo_bottom
+        btn(ctl, "Right")
+        btn(ctl, "Down")
+        assert ctl.state.screen is ScreenId.DEMO  # остались на экране
+        assert ctl.state.demo_top != top0
+        assert ctl.state.demo_bottom != bottom0
+        # Left на DEMO не должен уходить в _step_screen (иначе ValueError)
+        btn(ctl, "Left")
+        assert ctl.state.screen is ScreenId.DEMO
+
+    def test_e1_e2_cycle_tabs(self) -> None:
+        ctl, engine, _ = make_controller()
+        btn(ctl, "Note")
+        top0 = ctl.state.demo_top
+        enc(ctl, 1, 1)
+        assert ctl.state.demo_top != top0
+        bottom0 = ctl.state.demo_bottom
+        enc(ctl, 2, 1)
+        assert ctl.state.demo_bottom != bottom0
+
+    def test_e3_e8_set_values_with_clamp(self) -> None:
+        ctl, engine, _ = make_controller()
+        btn(ctl, "Note")
+        start = ctl.state.demo_values[0]
+        enc(ctl, 3, 10)
+        assert ctl.state.demo_values[0] == min(127, start + 10)
+        enc(ctl, 8, 127)  # кламп в 127
+        assert ctl.state.demo_values[5] == 127
+        enc(ctl, 8, -127)  # кламп в 0
+        assert ctl.state.demo_values[5] == 0
+        # Демо-экран не командует движком.
+        assert engine.calls == []
+
+    def test_values_length_is_always_six(self) -> None:
+        ctl, engine, _ = make_controller()
+        ctl.state.demo_values = (1, 2)  # искусственно битая длина
+        btn(ctl, "Note")
+        view = ctl.build_view(engine.get_status(), NOW)
+        assert len(view.demo.values) == 6
+        assert view.demo.values[2] == 64  # DEMO_VALUE_DEFAULT
+
+    def test_note_led_lit_on_demo(self) -> None:
+        ctl, engine, _ = make_controller()
+        btn(ctl, "Note")
+        states = ctl.button_led_states(engine.get_status())
+        assert states["Note"] == LED_GREEN
+
+    def test_other_screen_untouched(self) -> None:
+        """Возврат на TRACKS: состояние DEMO сохраняется, экран переключился."""
+        ctl, engine, _ = make_controller()
+        btn(ctl, "Note")
+        btn(ctl, "Left")
+        enc(ctl, 3, 5)
+        btn(ctl, "Session")
+        assert ctl.state.screen is ScreenId.TRACKS
+        view = ctl.build_view(engine.get_status(), NOW)
+        assert view.demo is None
+        assert view.tracks is not None

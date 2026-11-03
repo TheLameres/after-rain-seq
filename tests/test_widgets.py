@@ -202,6 +202,7 @@ class TestScreens:
             "scale",
             "setup",
             "ports",
+            "demo",
         )
 
     def test_register_custom_screen(self) -> None:

@@ -49,6 +49,7 @@ from src.devices.push2.widgets import (
     Rect,
     SegmentTabs,
     TabStrip,
+    slot_cells,
 )
 
 __all__ = [
@@ -56,6 +57,10 @@ __all__ = [
     "BODY_Y1",
     "COL_W",
     "DEFAULT_SCREENS",
+    "DEMO_BOTTOM_H",
+    "DEMO_COLS_Y0",
+    "DEMO_COLS_Y1",
+    "DEMO_TABS_H",
     "TAB_CELLS",
     "DemoScreen",
     "PortsScreen",
@@ -67,6 +72,7 @@ __all__ = [
     "TrackMacroScreen",
     "TracksScreen",
     "WizardScreen",
+    "draw_demo",
     "draw_header",
     "draw_ports",
     "draw_scale",
@@ -81,7 +87,8 @@ __all__ = [
 # Ячейки таб-бара: (метка, x-центр). Центры — под физическими кнопками,
 # которыми открывается вкладка (схема MidiMapping.png из спеки Ableton):
 # GEN под Clip (CC 113), MACRO под Device (CC 110), PORTS под Upper Row 5
-# (CC 106, кнопки верхнего ряда идут с шагом 120 px: 60+120*i).
+# (CC 106). Позиции взяты с картинки спеки, а не выведены из CC: номера CC
+# у Clip/Device лежат вне диапазона Upper Row, поэтому ряд из CC не строится.
 TAB_CELLS: tuple[tuple[str, int], ...] = (
     ("GEN", 906),
     ("MACRO", 800),
@@ -94,6 +101,13 @@ FLASH_ERROR = Colors.DISCONNECTED
 
 _ROW_H = 14  # высота строки списка (шрифт sm)
 _TRACK_ROW_H = 13  # строки TRACKS компактнее: внизу полоса имён под Lower Row
+
+# DEMO: полоса верхних вкладок 22 px внутрь body, полоса нижних — 16 px от низа.
+# Колонки живут строго между ними, иначе TabStrip/Column перекрывают друг друга.
+DEMO_TABS_H = 22
+DEMO_BOTTOM_H = 16
+DEMO_COLS_Y0 = BODY_Y0 + DEMO_TABS_H
+DEMO_COLS_Y1 = BODY_Y1 - DEMO_BOTTOM_H
 
 # Цвета статусов портов (значения из PortSummary.status).
 _PORT_STATUS_COLORS = {
@@ -445,6 +459,10 @@ class DemoScreen(Screen):
     равномерными центрами, середина — ColumnGrid под E1–E8, низ —
     SegmentTabs на всю ширину. Состояние крутят E1 (верхние вкладки)
     и E2 (нижние), E3–E8 — значения 0..127 с барами.
+
+    Вертикальная раскладка body (y 36–160): верхние вкладки 36–58,
+    колонки 58–144, нижние вкладки 144–160 — колонки не заходят под
+    таб-бар, иначе TabStrip закрашивает подписи «TOP (E1)»/E3–E8.
     """
 
     name = "demo"
@@ -453,36 +471,36 @@ class DemoScreen(Screen):
     def draw_body(self, fb: FrameBuffer, body: DemoView) -> None:
         view = body
         fb.fill_rect(0, BODY_Y0, FRAME_W, BODY_Y1 - BODY_Y0, Colors.BG)
+        if not view.top_tabs:
+            return  # пустой DTO — тело остаётся фоном (как у Screens для неизвестного экрана)
 
-        # Верхние вкладки: равномерные ячейки на всю ширину.
-        n = max(1, len(view.top_tabs))
-        cells = tuple(
-            (tab, FRAME_W // n * i + FRAME_W // n // 2)
-            for i, tab in enumerate(view.top_tabs)
-        )
-        active_top = view.top_tabs[view.top_index % len(view.top_tabs)]
+        # Верхние вкладки: по одной на физический слот (120 px), как кнопки Upper Row.
+        n = len(view.top_tabs)
+        cells = slot_cells(view.top_tabs)
+        active_top = view.top_tabs[view.top_index % n]
         TabStrip(cells, active=active_top).render(
             fb, Rect(0, BODY_Y0, FRAME_W, 22)
         )
 
-        # Середина: восемь колонок под E1–E8.
-        top_name = active_top
-        bottom_name = view.bottom_tabs[view.bottom_index % len(view.bottom_tabs)]
-        grid = ColumnGrid()
-        Column("TOP (E1)", top_name).render(fb, grid.rect(0))
-        Column("BOTTOM (E2)", bottom_name).render(fb, grid.rect(1))
-        for i in range(6):
-            value = view.values[i] if i < len(view.values) else 0
-            frac = max(0, min(127, value)) / 127.0
-            Column(f"E{i + 3}", f"{round(frac * 100)} %", frac).render(
-                fb, grid.rect(i + 2)
-            )
+        # Середина: восемь колонок под E1–E8 (строго между рядами вкладок).
+        grid = ColumnGrid(y0=DEMO_COLS_Y0, y1=DEMO_COLS_Y1)
+        Column("TOP (E1)", active_top).render(fb, grid.rect(0))
+        Column("BOTTOM (E2)", self._bottom_name(view)).render(fb, grid.rect(1))
+        for i, value in enumerate(view.values[:6]):
+            raw = max(0, min(127, value))
+            Column(f"E{i + 3}", str(raw), raw / 127.0).render(fb, grid.rect(i + 2))
 
         # Нижние вкладки: равные сегменты (образец — низ экрана Setup).
-        active_bottom = view.bottom_tabs[view.bottom_index % len(view.bottom_tabs)]
-        SegmentTabs(view.bottom_tabs, active=active_bottom).render(
+        SegmentTabs(view.bottom_tabs, active=self._bottom_name(view)).render(
             fb, Rect(0, BODY_Y1 - 16, FRAME_W, 16)
         )
+
+    @staticmethod
+    def _bottom_name(view: DemoView) -> str:
+        """Активная нижняя вкладка; пустой ряд не должен ронять рендер."""
+        if not view.bottom_tabs:
+            return ""
+        return view.bottom_tabs[view.bottom_index % len(view.bottom_tabs)]
 
 
 # ── PORTS ─────────────────────────────────────────────────────────────────────
@@ -530,6 +548,7 @@ DEFAULT_SCREENS: tuple[Screen, ...] = (
     ScaleScreen(),
     SetupScreen(),
     PortsScreen(),
+    DemoScreen(),
 )
 
 
@@ -630,3 +649,8 @@ def draw_setup(fb: FrameBuffer, view: SyncView) -> None:
 def draw_ports(fb: FrameBuffer, view: PortsView) -> None:
     """PORTS body: список портов + ROUTE."""
     PortsScreen().draw_body(fb, view)
+
+
+def draw_demo(fb: FrameBuffer, view: DemoView) -> None:
+    """DEMO body: вкладки сверху/снизу + восемь колонок под E1–E8."""
+    DemoScreen().draw_body(fb, view)
