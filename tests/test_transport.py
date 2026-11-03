@@ -273,3 +273,30 @@ class TestTransportProperties:
         """swing property returns the SwingApplier."""
         transport, _, _ = _make_transport(swing_amount=0.3)
         assert transport.swing.amount == 0.3
+
+
+def test_transport_does_not_advance_swing_step() -> None:
+    """Regression (plan §4.2): Transport must not apply swing to durations.
+
+    Swing is applied once in the generating engine. Transport delivering
+    NOTE_ON must leave the SwingApplier step counter untouched, otherwise
+    the even/odd alternation breaks.
+    """
+    transport, q, _ = _make_transport(swing_amount=0.5)
+    swing = transport.swing
+    before = repr(swing)
+
+    for beat in (0.0, 0.5, 1.0, 1.5):
+        q.put(
+            TransportEvent.note_on(
+                port_label="Synth A",
+                channel=0,
+                note=60,
+                velocity=100,
+                duration=0.5,
+                beat=beat,
+            )
+        )
+    transport.process_events(current_beat=0.0)
+
+    assert repr(swing) == before

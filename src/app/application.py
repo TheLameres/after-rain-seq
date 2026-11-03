@@ -432,8 +432,14 @@ class App:
                         engine.set_bpm(bpm_now)
                     if mutation_engine:
                         mutation_engine.set_bpm_all(bpm_now)
-                # Мутация до генерации — generate() использует новые параметры
+                # Мутация до генерации — generate() использует новые параметры.
+                # §4.1: подтянуть mutate из треков (freeze / set_track_mutate
+                # меняют track.mutate, а не копию в MutationEngine).
                 if mutation_engine:
+                    if session:
+                        for track in session.ordered_tracks():
+                            if isinstance(track, MelodicTrack):
+                                mutation_engine.sync_mutate(track.name, track.mutate)
                     mutation_engine.tick(timeline.current_time)
                 # C6 шаг 3: фаза графа — источники публикуют ChordEvent,
                 # наследники получают их в outbox (движки читают как окно)

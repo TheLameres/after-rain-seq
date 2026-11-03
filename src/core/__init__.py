@@ -1,17 +1,11 @@
-"""core — чистые типы без зависимостей от подсистем проекта.
+"""Чистые типы без внутренних зависимостей (plan §3.1, нижний слой).
 
-Правило слоя: модули здесь импортируют только стандартную библиотеку
-и ``pydantic``. Обратные импорты (``core`` → ``session``/``devices``/…)
-запрещены и проверяются в CI.
-
-Состав:
-
-- :class:`Color` — цвет как r/g/b с валидацией и проверкой хроматичности.
+Модули здесь импортируют только stdlib. Ничего из ``src.session``,
+``src.sync``, ``src.devices``, ``src.app``, ``src.repl`` сюда тянуться не должно.
 """
+
+from __future__ import annotations
 
 from src.core.color import ACHROMATIC_TOLERANCE, Color
 
-__all__ = [
-    "ACHROMATIC_TOLERANCE",
-    "Color",
-]
+__all__ = ["ACHROMATIC_TOLERANCE", "Color"]

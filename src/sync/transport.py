@@ -121,7 +121,7 @@ class Transport:
         """Drain the event queue and deliver all events.
 
         Called after each ``timeline.tick()`` from the TickProxy dispatch
-        hook.  Applies swing to event durations, delivers to ports via
+        hook.  Delivers events (swing is already applied upstream) to ports via
         :class:`PortRegistry`, and flushes throttled CC at bar boundaries.
 
         Parameters
@@ -217,15 +217,13 @@ class Transport:
     def _deliver_note_on(
         self, adapter: object, event: TransportEvent, current_beat: float
     ) -> None:
-        """Deliver a NOTE_ON, applying swing to duration if present."""
-        duration = event.duration
-        if duration is not None and self._swing.amount > 0.0:
-            swung = self._swing.apply_duration(base=duration, beat=current_beat)
-            duration = swung
+        """Deliver a NOTE_ON.
 
-        # Note: we pass duration through but MidiPortOutput.note_on()
-        # does not accept it — duration is used by isobar for scheduling,
-        # not by the MIDI output device.  We track it for swing only.
+        Swing is already applied to ``event.duration`` by the generating
+        engine (MelodicEngine / DrumEngine).  Applying it here again would
+        advance the shared step counter twice and break the even/odd
+        alternation, so the duration is not touched in this layer.
+        """
         adapter.note_on(  # type: ignore[attr-defined]
             channel=int(event.channel),
             note=int(event.note),  # type: ignore[arg-type]

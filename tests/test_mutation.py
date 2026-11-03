@@ -636,3 +636,42 @@ class TestProfileMechanism:
         pd = me.get_param_drift("Pad 1")
         assert pd is not None
         assert pd.get_base("gate") == 0.7
+
+
+class TestSyncMutate:
+    """Regression §4.1: track.mutate must reach MutationEngine state."""
+
+    def test_sync_updates_state(self) -> None:
+        engine = MutationEngine(rng=random.Random(0))
+        engine.register_track("Lead 1", "lead", mutate=0.5, degrees=[0, 2, 4])
+        engine.sync_mutate("Lead 1", 0.0)
+        state = engine.get_state("Lead 1")
+        assert state is not None
+        assert state.mutate == 0.0
+
+    def test_sync_keeps_counters(self) -> None:
+        engine = MutationEngine(rng=random.Random(0))
+        engine.register_track("Lead 1", "lead", mutate=0.5, degrees=[0, 2, 4])
+        before = engine.get_state("Lead 1")
+        assert before is not None
+        engine.sync_mutate("Lead 1", 0.2)
+        after = engine.get_state("Lead 1")
+        assert after is not None
+        assert after.mutation_count == before.mutation_count
+        assert after.next_mutation_beat == before.next_mutation_beat
+
+    def test_sync_unknown_track_is_noop(self) -> None:
+        engine = MutationEngine(rng=random.Random(0))
+        engine.sync_mutate("Ghost", 0.0)
+        assert engine.get_state("Ghost") is None
+
+    def test_frozen_track_gets_no_mutations_after_sync(self) -> None:
+        """Plan §2.2 acceptance: freeze → 0 mutations over many ticks."""
+        engine = MutationEngine(rng=random.Random(1))
+        engine.register_track("Pad 1", "pad", mutate=0.5, bpm=118.0, degrees=[0, 2, 4])
+        engine.sync_mutate("Pad 1", 0.0)  # simulate track.freeze()
+        for beat in range(20_000):
+            engine.tick(beat * 0.05)
+        state = engine.get_state("Pad 1")
+        assert state is not None
+        assert state.mutation_count == 0

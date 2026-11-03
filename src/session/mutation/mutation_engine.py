@@ -258,6 +258,25 @@ class MutationEngine:
         """Состояние мутации конкретной дорожки."""
         return self._states.get(track_name)
 
+    def sync_mutate(self, track_name: str, value: float) -> None:
+        """Подтянуть mutate из источника истины (``track.mutate``).
+
+        Вызывается перед каждым tick: ``MelodicTrack.freeze()`` и
+        ``AppEngineControl.set_track_mutate`` меняют только трек, а
+        ``MutationEngine`` хранит собственную копию в ``MutationState``.
+        Без синхронизации заморозка не доходит до движка (§4.1).
+        No-op, если значение уже совпадает.
+        """
+        state = self._states.get(track_name)
+        if state is None or state.mutate == value:
+            return
+        self._states[track_name] = MutationState(
+            mutate=value,
+            mutation_count=state.mutation_count,
+            next_mutation_beat=state.next_mutation_beat,
+            last_mutation_beat=state.last_mutation_beat,
+        )
+
     def set_mutate(self, track_name: str, value: float) -> None:
         """Установить mutate для конкретной дорожки.
 

@@ -297,6 +297,8 @@ class DrumTrack(Track):
         """Заморозить мутацию — запомнить текущий паттерн как базовый."""
         self._base_patterns = [list(lane.pattern) for lane in self.lanes]
         self._mutation_count = 0
+        # §4.3: без mutate=0 maybe_mutate продолжал мутировать после freeze.
+        self.mutate = 0.0
         log.info("DrumTrack %s: frozen", self.name)
 
     # ------------------------------------------------------------------
