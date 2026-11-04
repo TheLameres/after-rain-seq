@@ -12,7 +12,6 @@ from src.session.engine.melodic_engine import MelodicEngine
 from src.session.model.melodic_track import MelodicTrack
 from src.session.mutation.mutation_engine import MutationEngine
 from src.session.session import Session
-from src.sync.swing import SwingApplier, SwingConfig
 from src.sync.transport_event import EventKind, TransportEvent
 
 
@@ -26,12 +25,6 @@ def harmony() -> Harmony:
 def event_queue() -> queue.Queue[TransportEvent]:
     """Очередь событий."""
     return queue.Queue(maxsize=4096)
-
-
-@pytest.fixture()
-def no_swing() -> SwingApplier:
-    """SwingApplier без свинга."""
-    return SwingApplier(SwingConfig(amount=0.0))
 
 
 @pytest.fixture()
@@ -55,11 +48,10 @@ class TestMelodicEngine:
         self,
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
-        no_swing: SwingApplier,
     ) -> None:
         """tick() с cc_only профилем — 0 событий."""
         track = MelodicTrack(name="CC 1", profile_name="cc_filter", channel=0)
-        engine = MelodicEngine(track, harmony, event_queue, "default", no_swing)
+        engine = MelodicEngine(track, harmony, event_queue, "default")
         count = engine.tick(0.0)
         assert count == 0
         assert event_queue.empty()
@@ -69,10 +61,9 @@ class TestMelodicEngine:
         pad_track: MelodicTrack,
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
-        no_swing: SwingApplier,
     ) -> None:
         """tick() с pad-дорожкой — TransportEvent в очереди."""
-        engine = MelodicEngine(pad_track, harmony, event_queue, "default", no_swing)
+        engine = MelodicEngine(pad_track, harmony, event_queue, "default")
         count = engine.tick(0.0)
         assert count > 0
         assert not event_queue.empty()
@@ -82,10 +73,9 @@ class TestMelodicEngine:
         pad_track: MelodicTrack,
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
-        no_swing: SwingApplier,
     ) -> None:
         """degrees резолвятся в правильные MIDI-ноты."""
-        engine = MelodicEngine(pad_track, harmony, event_queue, "default", no_swing)
+        engine = MelodicEngine(pad_track, harmony, event_queue, "default")
         engine.tick(0.0)
 
         events: list[TransportEvent] = []
@@ -102,10 +92,9 @@ class TestMelodicEngine:
         pad_track: MelodicTrack,
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
-        no_swing: SwingApplier,
     ) -> None:
         """gate применяется к длительности."""
-        engine = MelodicEngine(pad_track, harmony, event_queue, "default", no_swing)
+        engine = MelodicEngine(pad_track, harmony, event_queue, "default")
         engine.tick(0.0)
 
         events: list[TransportEvent] = []
@@ -117,39 +106,34 @@ class TestMelodicEngine:
             if ev.duration is not None:
                 assert ev.duration == pytest.approx(0.9)
 
-    def test_swing_applied(
+    def test_engine_does_not_swing(
         self,
         pad_track: MelodicTrack,
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
     ) -> None:
-        """Свинг применяется к длительностям."""
-        swing = SwingApplier(SwingConfig(amount=0.5))
-        engine = MelodicEngine(pad_track, harmony, event_queue, "default", swing)
+        """§4.2: движок отдаёт чистую музыкальную позицию, свинг — в Transport."""
+        engine = MelodicEngine(pad_track, harmony, event_queue, "default")
         engine.tick(0.0)
 
         events: list[TransportEvent] = []
         while not event_queue.empty():
             events.append(event_queue.get_nowait())
 
-        # При swing=0.5 чётные шаги сетки укорачиваются, нечётные удлиняются.
-        # Ноты одного аккорда звучат одновременно — свинг у них одинаковый
-        # (у stateful-свинга они получали разные длительности: §4.2).
         durations = [ev.duration for ev in events if ev.duration is not None]
         assert len(durations) > 0
+        # Все ноты аккорда несут одинаковую невзвешенную длительность gate*step.
         assert len(set(durations)) == 1
-        # И значение отличается от невзвешенного gate*step
-        assert durations[0] != 0.9
+        assert durations[0] == pytest.approx(0.9)
 
     def test_all_notes_off(
         self,
         pad_track: MelodicTrack,
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
-        no_swing: SwingApplier,
     ) -> None:
         """all_notes_off() шлёт ALL_NOTES_OFF."""
-        engine = MelodicEngine(pad_track, harmony, event_queue, "default", no_swing)
+        engine = MelodicEngine(pad_track, harmony, event_queue, "default")
         engine.all_notes_off()
 
         assert not event_queue.empty()
@@ -162,10 +146,9 @@ class TestMelodicEngine:
         pad_track: MelodicTrack,
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
-        no_swing: SwingApplier,
     ) -> None:
         """События несут правильный port_label."""
-        engine = MelodicEngine(pad_track, harmony, event_queue, "synth_a", no_swing)
+        engine = MelodicEngine(pad_track, harmony, event_queue, "synth_a")
         engine.tick(0.0)
 
         ev = event_queue.get_nowait()
@@ -176,11 +159,10 @@ class TestMelodicEngine:
         pad_track: MelodicTrack,
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
-        no_swing: SwingApplier,
     ) -> None:
         """События несут правильный channel."""
         pad_track.channel = 5
-        engine = MelodicEngine(pad_track, harmony, event_queue, "default", no_swing)
+        engine = MelodicEngine(pad_track, harmony, event_queue, "default")
         engine.tick(0.0)
 
         ev = event_queue.get_nowait()
@@ -190,11 +172,10 @@ class TestMelodicEngine:
         self,
         pad_track: MelodicTrack,
         harmony: Harmony,
-        no_swing: SwingApplier,
     ) -> None:
         """При переполнении очереди — drop-oldest."""
         small_queue: queue.Queue[TransportEvent] = queue.Queue(maxsize=2)
-        engine = MelodicEngine(pad_track, harmony, small_queue, "default", no_swing)
+        engine = MelodicEngine(pad_track, harmony, small_queue, "default")
 
         # Заполняем очередь
         small_queue.put_nowait(TransportEvent.all_notes_off(port_label="default"))
@@ -209,10 +190,9 @@ class TestMelodicEngine:
         pad_track: MelodicTrack,
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
-        no_swing: SwingApplier,
     ) -> None:
         """repr содержит имя дорожки."""
-        engine = MelodicEngine(pad_track, harmony, event_queue, "default", no_swing)
+        engine = MelodicEngine(pad_track, harmony, event_queue, "default")
         r = repr(engine)
         assert "Pad 1" in r
 
@@ -224,11 +204,10 @@ class TestPortRouting:
         self,
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
-        no_swing: SwingApplier,
         pad_track: MelodicTrack,
     ) -> None:
         """set_port_label возвращает предыдущую метку."""
-        engine = MelodicEngine(pad_track, harmony, event_queue, "main", no_swing)
+        engine = MelodicEngine(pad_track, harmony, event_queue, "main")
         old = engine.set_port_label("aux")
         assert old == "main"
         assert engine.port_label == "aux"
@@ -237,11 +216,10 @@ class TestPortRouting:
         self,
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
-        no_swing: SwingApplier,
         pad_track: MelodicTrack,
     ) -> None:
         """port_label=None — тишина: tick() ничего не генерирует."""
-        engine = MelodicEngine(pad_track, harmony, event_queue, None, no_swing)
+        engine = MelodicEngine(pad_track, harmony, event_queue, None)
         count = engine.tick(0.0)
         assert count == 0
         assert event_queue.empty()
@@ -250,11 +228,10 @@ class TestPortRouting:
         self,
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
-        no_swing: SwingApplier,
         pad_track: MelodicTrack,
     ) -> None:
         """all_notes_off без порта — no-op (нечего глушить)."""
-        engine = MelodicEngine(pad_track, harmony, event_queue, None, no_swing)
+        engine = MelodicEngine(pad_track, harmony, event_queue, None)
         engine.all_notes_off()
         assert event_queue.empty()
 
@@ -262,11 +239,10 @@ class TestPortRouting:
         self,
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
-        no_swing: SwingApplier,
         pad_track: MelodicTrack,
     ) -> None:
         """all_notes_off шлётся на текущий порт."""
-        engine = MelodicEngine(pad_track, harmony, event_queue, "main", no_swing)
+        engine = MelodicEngine(pad_track, harmony, event_queue, "main")
         engine.all_notes_off()
         events = []
         while not event_queue.empty():
@@ -291,10 +267,9 @@ class TestBeatScheduling:
         pad_track: MelodicTrack,
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
-        no_swing: SwingApplier,
     ) -> None:
         """Каждая нота — ровно один раз: нет дублей на тик (R1)."""
-        engine = MelodicEngine(pad_track, harmony, event_queue, "default", no_swing)
+        engine = MelodicEngine(pad_track, harmony, event_queue, "default")
         on_beats: list[float] = []
         for k in range(9):  # тики 0.0 .. 4.0 шагом 0.5
             engine.tick(k * 0.5)
@@ -311,10 +286,9 @@ class TestBeatScheduling:
         pad_track: MelodicTrack,
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
-        no_swing: SwingApplier,
     ) -> None:
         """Каждому note_on соответствует note_off на beat + длительность."""
-        engine = MelodicEngine(pad_track, harmony, event_queue, "default", no_swing)
+        engine = MelodicEngine(pad_track, harmony, event_queue, "default")
         on_map: dict[float, list[int]] = {}
         off_map: dict[float, list[int]] = {}
         tick = 1.0 / 32.0  # как реальные тики (1/32 доли и чаще)
@@ -336,10 +310,9 @@ class TestBeatScheduling:
         pad_track: MelodicTrack,
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
-        no_swing: SwingApplier,
     ) -> None:
         """Паттерн цикличен: ноты на 0.0 == на 2.0, на 1.0 == на 3.0."""
-        engine = MelodicEngine(pad_track, harmony, event_queue, "default", no_swing)
+        engine = MelodicEngine(pad_track, harmony, event_queue, "default")
         on_map: dict[float, list[int]] = {}
         for k in range(7):  # тики 0.0 .. 3.0 шагом 0.5
             engine.tick(k * 0.5)
@@ -356,10 +329,9 @@ class TestBeatScheduling:
         pad_track: MelodicTrack,
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
-        no_swing: SwingApplier,
     ) -> None:
         """STOP/reset: запланированное «прошлое» не доставляется."""
-        engine = MelodicEngine(pad_track, harmony, event_queue, "default", no_swing)
+        engine = MelodicEngine(pad_track, harmony, event_queue, "default")
         engine.tick(0.0)  # расписано [0, 4)
         assert engine.scheduler.pending_count > 0
         _drain(event_queue)  # delivered-события не смешиваем с проверкой reset
@@ -378,10 +350,9 @@ class TestBeatScheduling:
         pad_track: MelodicTrack,
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
-        no_swing: SwingApplier,
     ) -> None:
         """port_label=None — планировщик не трогаем вообще."""
-        engine = MelodicEngine(pad_track, harmony, event_queue, None, no_swing)
+        engine = MelodicEngine(pad_track, harmony, event_queue, None)
         assert engine.tick(0.0) == 0
         assert not engine.scheduler.initialized
         assert engine.scheduler.pending_count == 0
@@ -391,10 +362,9 @@ class TestBeatScheduling:
         pad_track: MelodicTrack,
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
-        no_swing: SwingApplier,
     ) -> None:
         """Watermark держится на now + horizon, достраивается по мере надобности."""
-        engine = MelodicEngine(pad_track, harmony, event_queue, "default", no_swing)
+        engine = MelodicEngine(pad_track, harmony, event_queue, "default")
         engine.tick(0.0)
         assert engine.scheduler.watermark == 4.0  # 0 + H
         engine.tick(1.0)
@@ -408,11 +378,10 @@ class TestBeatScheduling:
         self,
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
-        no_swing: SwingApplier,
     ) -> None:
         """cc_only-профиль — планировщик пуст."""
         track = MelodicTrack(name="CC 1", profile_name="cc_filter", channel=0)
-        engine = MelodicEngine(track, harmony, event_queue, "default", no_swing)
+        engine = MelodicEngine(track, harmony, event_queue, "default")
         assert engine.tick(0.0) == 0
         assert engine.scheduler.pending_count == 0
         assert event_queue.empty()
@@ -421,11 +390,10 @@ class TestBeatScheduling:
         self,
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
-        no_swing: SwingApplier,
     ) -> None:
         """reads_source без источников (стратегия B) — тишина, не падение."""
         track = MelodicTrack(name="Sub 1", profile_name="sub", channel=1)
-        engine = MelodicEngine(track, harmony, event_queue, "default", no_swing)
+        engine = MelodicEngine(track, harmony, event_queue, "default")
         assert engine.tick(0.0) == 0
         assert engine.scheduler.pending_count == 0
         assert event_queue.empty()
@@ -449,11 +417,10 @@ class TestGraphIntegration:
         self,
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
-        no_swing: SwingApplier,
     ) -> None:
         """seq нарезает ChordEvent Pad 1: ноты — ступени аккордов источника."""
         _, seq = self._session_pad_seq()
-        engine = MelodicEngine(seq, harmony, event_queue, "default", no_swing)
+        engine = MelodicEngine(seq, harmony, event_queue, "default")
         engine.tick(0.0)
         events = _drain(event_queue)
         ons = [ev for ev in events if ev.kind == EventKind.NOTE_ON]
@@ -467,7 +434,6 @@ class TestGraphIntegration:
         self,
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
-        no_swing: SwingApplier,
     ) -> None:
         """До propagate_chords outbox пуст — движок молчит (стратегия B)."""
         session = Session()
@@ -476,7 +442,7 @@ class TestGraphIntegration:
         session.set_sources("Seq 1", "Pad 1")
         seq = session.get_track("Seq 1")
         assert isinstance(seq, MelodicTrack)
-        engine = MelodicEngine(seq, harmony, event_queue, "default", no_swing)
+        engine = MelodicEngine(seq, harmony, event_queue, "default")
         assert engine.tick(0.0) == 0
         assert event_queue.empty()
 
@@ -484,11 +450,10 @@ class TestGraphIntegration:
         self,
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
-        no_swing: SwingApplier,
     ) -> None:
         """Удаление источника: после propagate окно пустое — тишина."""
         session, seq = self._session_pad_seq()
-        engine = MelodicEngine(seq, harmony, event_queue, "default", no_swing)
+        engine = MelodicEngine(seq, harmony, event_queue, "default")
         session.remove_track("Pad 1")  # стратегия B: sources Seq 1 сброшены
         session.propagate_chords()
         assert engine.tick(0.0) == 0
@@ -508,7 +473,6 @@ class TestMutationIntegration:
         self,
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
-        no_swing: SwingApplier,
     ) -> None:
         """NoteDrift меняет ступени lead после мутации."""
         track = MelodicTrack(name="Lead 1", profile_name="lead", degrees=[0, 2, 4, 2])
@@ -517,7 +481,7 @@ class TestMutationIntegration:
             track_name="Lead 1", profile_name="lead", degrees=[0, 2, 4, 2]
         )
         engine = MelodicEngine(
-            track, harmony, event_queue, "default", no_swing, mutation_engine=me
+            track, harmony, event_queue, "default", mutation_engine=me
         )
         before = [n.degree for n in engine._pattern()[0]]
         self._mutate_now(me, "Lead 1")
@@ -528,7 +492,6 @@ class TestMutationIntegration:
         self,
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
-        no_swing: SwingApplier,
     ) -> None:
         """ParamDrift меняет гейт/регистр pad после мутации."""
         track = MelodicTrack(name="Pad 1", profile_name="pad", degrees=[0, 3])
@@ -537,7 +500,7 @@ class TestMutationIntegration:
             track_name="Pad 1", profile_name="pad", degrees=[0, 3], gate=0.9
         )
         engine = MelodicEngine(
-            track, harmony, event_queue, "default", no_swing, mutation_engine=me
+            track, harmony, event_queue, "default", mutation_engine=me
         )
         before = engine._pattern()[0]
         self._mutate_now(me, "Pad 1")
@@ -551,7 +514,6 @@ class TestMutationIntegration:
         self,
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
-        no_swing: SwingApplier,
     ) -> None:
         """FloatingEuclidean меняет нарезку seq после мутации."""
         session = Session()
@@ -569,9 +531,7 @@ class TestMutationIntegration:
             euclidean_steps=16,
             euclidean_pulses=6,
         )
-        engine = MelodicEngine(
-            seq, harmony, event_queue, "default", no_swing, mutation_engine=me
-        )
+        engine = MelodicEngine(seq, harmony, event_queue, "default", mutation_engine=me)
         before = engine._pattern()[0]
         self._mutate_now(me, "Seq 1")
         after = engine._pattern()[0]
@@ -583,7 +543,6 @@ class TestMutationIntegration:
         self,
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
-        no_swing: SwingApplier,
     ) -> None:
         """freeze: мутация остановлена — паттерн не меняется."""
         track = MelodicTrack(name="Lead 1", profile_name="lead", degrees=[0, 2, 4, 2])
@@ -592,7 +551,7 @@ class TestMutationIntegration:
             track_name="Lead 1", profile_name="lead", degrees=[0, 2, 4, 2]
         )
         engine = MelodicEngine(
-            track, harmony, event_queue, "default", no_swing, mutation_engine=me
+            track, harmony, event_queue, "default", mutation_engine=me
         )
         me.freeze_all()
         before = [n.degree for n in engine._pattern()[0]]
@@ -612,9 +571,8 @@ class TestMute:
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
     ) -> None:
-        swing = SwingApplier(SwingConfig(amount=0.0))
         pad_track.muted = True
-        engine = MelodicEngine(pad_track, harmony, event_queue, "default", swing)
+        engine = MelodicEngine(pad_track, harmony, event_queue, "default")
         assert engine.tick(0.0) == 0
         assert event_queue.empty()
 
@@ -624,9 +582,8 @@ class TestMute:
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
     ) -> None:
-        swing = SwingApplier(SwingConfig(amount=0.0))
         pad_track.muted = True
-        engine = MelodicEngine(pad_track, harmony, event_queue, "default", swing)
+        engine = MelodicEngine(pad_track, harmony, event_queue, "default")
         engine.tick(0.0)
         pad_track.muted = False
         assert engine.tick(1.0) > 0

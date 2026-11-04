@@ -1,8 +1,13 @@
 """Transport — MIDI event delivery engine.
 
 Picks up :class:`TransportEvent` instances from the CaptureOutput queue,
-applies swing (duration transformation), and delivers them to physical
-MIDI ports via :class:`PortRegistry`.
+applies swing (onset delay) and delivers them to physical MIDI ports via
+:class:`PortRegistry`.
+
+Swing lives here and nowhere else (plan §4.2): engines emit unmodified
+musical beats, and this layer decides *when* to hand each NOTE_ON to the
+port.  Events that swing pushes into the future wait in a small buffer
+and are released by a later ``process_events()`` call.
 
 Two modes under one interface (plan v5.4 §5.1):
 
@@ -77,6 +82,8 @@ class Transport:
     >>> transport.process_events()
     """
 
+    _EPSILON: float = 1e-9
+
     def __init__(
         self,
         event_queue: queue.Queue[TransportEvent],
@@ -89,6 +96,11 @@ class Transport:
         self._swing = swing
         self._mode = mode
         self._last_bar_flush: int = -1
+        # Свинг сдвигает onset в будущее — ждущие события лежат здесь,
+        # отсортированные по моменту отправки (plan §4.2).
+        self._held: list[tuple[float, TransportEvent]] = []
+        # Страховка от неограниченного роста, если timeline встал.
+        self._max_held: int = 512
 
     # ------------------------------------------------------------------
     # Public API
@@ -141,8 +153,11 @@ class Transport:
                 event = self._queue.get_nowait()
             except queue.Empty:
                 break
-            self._deliver(event, current_beat)
-            delivered += 1
+            deliver_at = self._schedule(event, current_beat)
+            if deliver_at is None:
+                delivered += 1
+
+        delivered += self._release_due(current_beat)
 
         # Flush CC at bar boundaries (every 4 beats)
         bar_number = int(current_beat // 4)
@@ -165,6 +180,9 @@ class Transport:
             except queue.Empty:
                 break
 
+        # Отложенные свингом события тоже не должны прозвучать после паники.
+        self._held.clear()
+
         # Silence all ports
         for adapter in self._registry.all_outputs():
             try:
@@ -185,6 +203,50 @@ class Transport:
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
+
+    def _schedule(self, event: TransportEvent, current_beat: float) -> float | None:
+        """Отправить сейчас или отложить по свингу.
+
+        Свинг сдвигает только *onset* (NOTE_ON): длительность ноты задаётся
+        моментом NOTE_OFF, который приходит отдельным событием и не трогается,
+        поэтому пара сохраняет длину, а groove меняется.
+
+        Returns:
+            Момент отложенной отправки, либо ``None``, если событие уже
+            передано в порт.
+        """
+        # Свинг касается только начала ноты.
+        if event.kind is not EventKind.NOTE_ON:
+            self._deliver(event, current_beat)
+            return None
+
+        delay = self._swing.shift(event.beat)
+        if delay <= 0.0:
+            self._deliver(event, current_beat)
+            return None
+
+        deliver_at = event.beat + delay
+        if deliver_at <= current_beat + self._EPSILON:
+            # Событие уже «прозевало» свой сдвиг — не тянем его в будущее.
+            self._deliver(event, current_beat)
+            return None
+
+        if len(self._held) >= self._max_held:
+            log.warning("Transport: swing buffer full, dropping held event")
+            return deliver_at
+        self._held.append((deliver_at, event))
+        self._held.sort(key=lambda item: item[0])
+        return deliver_at
+
+    def _release_due(self, current_beat: float) -> int:
+        """Отправить отложенные события, чей момент наступил."""
+        released = 0
+        limit = current_beat + self._EPSILON
+        while self._held and self._held[0][0] <= limit:
+            _, event = self._held.pop(0)
+            self._deliver(event, current_beat)
+            released += 1
+        return released
 
     def _deliver(self, event: TransportEvent, current_beat: float) -> None:
         """Deliver a single event to its target port."""
@@ -219,10 +281,8 @@ class Transport:
     ) -> None:
         """Deliver a NOTE_ON.
 
-        Swing is already applied to ``event.duration`` by the generating
-        engine (MelodicEngine / DrumEngine).  Applying it here again would
-        advance the shared step counter twice and break the even/odd
-        alternation, so the duration is not touched in this layer.
+        Timing was already decided in :meth:`_schedule`; the port API takes
+        no duration, so there is nothing to transform here.
         """
         adapter.note_on(  # type: ignore[attr-defined]
             channel=int(event.channel),

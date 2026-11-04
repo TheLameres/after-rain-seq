@@ -1,10 +1,10 @@
-"""Tests for swing — groove through duration modification."""
+"""Tests for swing — onset delay computed from musical position."""
 
 from __future__ import annotations
 
 import pytest
 
-from src.sync.swing import SwingApplier, SwingConfig, swing_duration
+from src.sync.swing import SwingApplier, SwingConfig, swing_shift
 
 
 class TestSwingConfig:
@@ -52,182 +52,116 @@ class TestSwingConfig:
             SwingConfig(grid=1)
 
 
-class TestSwingDuration:
-    """Tests for the pure swing_duration function."""
+class TestSwingShift:
+    """Pure function: delay of an onset, in beats."""
 
-    def test_zero_amount_passthrough(self):
-        """Amount 0 returns base unchanged."""
-        assert swing_duration(base=0.5, step_index=0, amount=0.0) == 0.5
-        assert swing_duration(base=0.5, step_index=1, amount=0.0) == 0.5
+    def test_zero_amount_is_zero_delay(self):
+        assert swing_shift(beat=0.0, grid=2, amount=0.0) == 0.0
+        assert swing_shift(beat=0.5, grid=2, amount=0.0) == 0.0
 
-    def test_even_step_shortened(self):
-        """Even step is shortened."""
-        result = swing_duration(base=0.5, step_index=0, amount=0.5)
-        assert result < 0.5
+    def test_even_step_has_no_delay(self):
+        assert swing_shift(beat=0.0, grid=2, amount=0.5) == 0.0
+        assert swing_shift(beat=1.0, grid=2, amount=0.5) == 0.0
+        assert swing_shift(beat=4.0, grid=2, amount=0.5) == 0.0
 
-    def test_odd_step_lengthened(self):
-        """Odd step is lengthened."""
-        result = swing_duration(base=0.5, step_index=1, amount=0.5)
-        assert result > 0.5
+    def test_odd_step_is_delayed(self):
+        # (1/grid) * amount * 0.5 = 0.5 * 0.5 * 0.5
+        assert swing_shift(beat=0.5, grid=2, amount=0.5) == pytest.approx(0.125)
+        assert swing_shift(beat=1.5, grid=2, amount=0.5) == pytest.approx(0.125)
 
     def test_pair_sum_preserved(self):
-        """Sum of even + odd = 2 * base (tempo does not drift)."""
-        base = 0.5
-        amount = 0.5
-        even = swing_duration(base, 0, amount)
-        odd = swing_duration(base, 1, amount)
-        assert even + odd == pytest.approx(2 * base)
+        """Two consecutive intervals still sum to one pair -> no drift."""
+        grid, amount = 2, 0.5
+        onset_even = 0.0
+        onset_odd = 0.5 + swing_shift(0.5, grid, amount)
+        next_even = 1.0
 
-    def test_full_amount_halves_and_doubles(self):
-        """Amount=1.0: even = base*0.5, odd = base*1.5."""
-        base = 0.5
-        assert swing_duration(base, 0, 1.0) == pytest.approx(0.25)
-        assert swing_duration(base, 1, 1.0) == pytest.approx(0.75)
+        first = onset_odd - onset_even
+        second = next_even - onset_odd
+        assert first > 0.5 > second  # odd long, next even short
+        assert first + second == pytest.approx(1.0)
 
-    def test_half_amount_quarter_shift(self):
-        """Amount=0.5: shift = base * 0.25."""
-        base = 0.5
-        assert swing_duration(base, 0, 0.5) == pytest.approx(0.375)
-        assert swing_duration(base, 1, 0.5) == pytest.approx(0.625)
+    def test_finer_grid_scales_delay(self):
+        """grid=4 (1/16) yields half the delay of grid=2 for the same amount."""
+        fine = swing_shift(beat=0.25, grid=4, amount=0.5)
+        coarse = swing_shift(beat=0.5, grid=2, amount=0.5)
+        assert fine == pytest.approx(coarse / 2)
 
-    def test_step_index_modulo(self):
-        """Step index wraps: step 2 behaves like step 0."""
-        base = 0.5
-        amount = 0.5
-        assert swing_duration(base, 0, amount) == pytest.approx(
-            swing_duration(base, 2, amount)
-        )
-        assert swing_duration(base, 1, amount) == pytest.approx(
-            swing_duration(base, 3, amount)
-        )
+    def test_grid_below_two_is_noop(self):
+        assert swing_shift(beat=0.5, grid=1, amount=0.5) == 0.0
+
+    def test_beat_just_below_grid_line_still_swings(self):
+        """Floating point must not drop a beat that belongs to the odd step."""
+        # 0.5 computed just below the grid line — epsilon puts it back on it.
+        assert swing_shift(beat=0.5 - 1e-12, grid=2, amount=0.5) > 0.0
+        assert swing_shift(beat=0.5, grid=2, amount=0.5) > 0.0
 
 
 class TestSwingApplier:
-    """Tests for the SwingApplier class."""
+    """SwingApplier — onset delay for the Transport."""
 
     def test_zero_amount_passthrough(self):
-        """Amount 0 returns base unchanged and does not track state."""
         applier = SwingApplier(SwingConfig(amount=0.0))
-        assert applier.apply_duration(base=0.5, beat=0.0) == 0.5
-        assert applier.apply_duration(base=0.5, beat=0.5) == 0.5
+        assert applier.shift(0.0) == 0.0
+        assert applier.shift(0.5) == 0.0
 
-    def test_alternating_short_long(self):
-        """Consecutive calls alternate short/long."""
+    def test_alternates_by_position(self):
         applier = SwingApplier(SwingConfig(amount=0.5))
-        d0 = applier.apply_duration(base=0.5, beat=0.0)
-        d1 = applier.apply_duration(base=0.5, beat=0.5)
-        d2 = applier.apply_duration(base=0.5, beat=1.0)
-        d3 = applier.apply_duration(base=0.5, beat=1.5)
-        assert d0 < 0.5  # even, short
-        assert d1 > 0.5  # odd, long
-        assert d2 < 0.5  # even, short
-        assert d3 > 0.5  # odd, long
-
-    def test_reset_clears_state(self):
-        """Reset starts swing from step 0."""
-        applier = SwingApplier(SwingConfig(amount=0.5))
-        applier.apply_duration(base=0.5, beat=0.0)  # step 0
-        applier.apply_duration(base=0.5, beat=0.5)  # step 1
-        applier.reset()
-        d = applier.apply_duration(base=0.5, beat=0.0)
-        assert d < 0.5  # back to even (short)
-
-    def test_backward_beat_resets(self):
-        """Beat jumping backwards resets step counter."""
-        applier = SwingApplier(SwingConfig(amount=0.5))
-        applier.apply_duration(base=0.5, beat=4.0)  # some step
-        applier.apply_duration(base=0.5, beat=0.0)  # jumped back
-        # After backward jump, step resets → even (short)
-        d = applier.apply_duration(base=0.5, beat=0.5)
-        assert d > 0.5  # odd (long) — confirms reset happened
-
-    def test_large_forward_jump_resets(self):
-        """Beat jumping forward > 8 beats resets step counter."""
-        applier = SwingApplier(SwingConfig(amount=0.5))
-        applier.apply_duration(base=0.5, beat=0.0)  # step 0
-        # Jump forward by more than 2 bars
-        d = applier.apply_duration(base=0.5, beat=16.0)
-        # After jump, step resets → even (short)
-        assert d < 0.5
+        assert applier.shift(0.0) == 0.0  # even, on time
+        assert applier.shift(0.5) > 0.0  # odd, delayed
+        assert applier.shift(1.0) == 0.0  # even again
+        assert applier.shift(1.5) > 0.0  # odd again
 
     def test_properties(self):
-        """amount and grid properties return config values."""
         applier = SwingApplier(SwingConfig(amount=0.3, grid=4))
         assert applier.amount == 0.3
         assert applier.grid == 4
 
-    def test_repr(self):
-        """repr includes amount, grid, and step."""
-        applier = SwingApplier(SwingConfig(amount=0.3))
-        r = repr(applier)
-        assert "0.3" in r
-        assert "2" in r  # grid
+    def test_set_amount_keeps_grid(self):
+        applier = SwingApplier(SwingConfig(amount=0.0, grid=4))
+        applier.set_amount(0.5)
+        assert applier.amount == 0.5
+        assert applier.grid == 4
 
-    def test_grid_four_sixteenth_notes(self):
-        """Grid=4 applies swing to 1/16 steps."""
-        applier = SwingApplier(SwingConfig(amount=0.5, grid=4))
-        d0 = applier.apply_duration(base=0.25, beat=0.0)
-        d1 = applier.apply_duration(base=0.25, beat=0.25)
-        d2 = applier.apply_duration(base=0.25, beat=0.5)
-        d3 = applier.apply_duration(base=0.25, beat=0.75)
-        assert d0 < 0.25  # step 0, even
-        assert d1 > 0.25  # step 1, odd
-        assert d2 < 0.25  # step 2, even
-        assert d3 > 0.25  # step 3, odd
+    def test_repr(self):
+        applier = SwingApplier(SwingConfig(amount=0.3))
+        assert "SwingApplier" in repr(applier)
+        assert "0.3" in repr(applier)
+
+    def test_duration_api_is_gone(self):
+        """§4.2: swing no longer rewrites durations anywhere."""
+        applier = SwingApplier(SwingConfig(amount=0.5))
+        assert not hasattr(applier, "apply_duration")
+        assert not hasattr(applier, "apply_step")
 
 
 class TestSwingIsStateless:
-    """§4.2 acceptance: same (duration, beat) → same result, always."""
+    """§4.2 acceptance: same beat → same result, always."""
 
     def test_identical_inputs_identical_output(self):
         applier = SwingApplier(SwingConfig(amount=0.5))
-        first = applier.apply_duration(base=0.5, beat=0.5)
+        first = applier.shift(0.5)
         for _ in range(10):
-            applier.apply_duration(base=0.5, beat=0.25)
-        assert applier.apply_duration(base=0.5, beat=0.5) == first
+            applier.shift(0.25)
+        assert applier.shift(0.5) == first
 
     def test_two_tracks_do_not_disturb_each_other(self):
         """Interleaved calls (two tracks) keep per-position parity."""
         applier = SwingApplier(SwingConfig(amount=0.5))
-        alone_a = [
-            applier.apply_duration(base=0.5, beat=b) for b in (0.0, 0.5, 1.0, 1.5)
-        ]
+        alone_a = [applier.shift(b) for b in (0.0, 0.5, 1.0, 1.5)]
 
         applier2 = SwingApplier(SwingConfig(amount=0.5))
         interleaved: list[float] = []
         for b in (0.0, 0.5, 1.0, 1.5):
             # вторая дорожка «шумит» между шагами первой
-            applier2.apply_duration(base=0.5, beat=b + 0.25)
-            interleaved.append(applier2.apply_duration(base=0.5, beat=b))
+            applier2.shift(b + 0.25)
+            interleaved.append(applier2.shift(b))
 
         assert interleaved == alone_a
-        assert interleaved[0] < 0.5 < interleaved[1]
+        assert interleaved[1] > 0.0 > -1  # odd step delayed, even not
 
     def test_beat_position_determines_parity(self):
         applier = SwingApplier(SwingConfig(amount=0.5))
-        # чётные 1/8 — короткие, нечётные — длинные, независимо от порядка
-        assert applier.apply_duration(base=0.5, beat=4.0) < 0.5
-        assert applier.apply_duration(base=0.5, beat=2.0) < 0.5
-        assert applier.apply_duration(base=0.5, beat=1.5) > 0.5
-
-
-class TestApplyStep:
-    """apply_step — для сеток, заданных номером шага паттерна."""
-
-    def test_alternates_by_step(self):
-        applier = SwingApplier(SwingConfig(amount=0.5))
-        short = applier.apply_step(base=0.25, step_index=0)
-        long_ = applier.apply_step(base=0.25, step_index=1)
-        assert short < 0.25 < long_
-
-    def test_matches_apply_duration_when_step_is_beat(self):
-        """При grid=2 и step=2*beat результаты совпадают."""
-        applier = SwingApplier(SwingConfig(amount=0.4))
-        for beat in (0.0, 0.5, 1.0, 1.5):
-            assert applier.apply_step(0.5, int(beat * 2)) == applier.apply_duration(
-                base=0.5, beat=beat
-            )
-
-    def test_wraps_around_grid(self):
-        applier = SwingApplier(SwingConfig(amount=0.5))
-        assert applier.apply_step(0.25, 0) == applier.apply_step(0.25, 4)
+        assert applier.shift(4.0) == 0.0
+        assert applier.shift(2.0) == 0.0
+        assert applier.shift(1.5) > 0.0

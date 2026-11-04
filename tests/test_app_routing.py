@@ -55,7 +55,6 @@ def make_app() -> tuple[App, object, object]:
             harmony=Harmony("A", "dorian"),
             event_queue=app._event_queue,
             port_label="main",
-            swing=swing,
         )
     ]
     app._drum_engines = [
@@ -63,7 +62,6 @@ def make_app() -> tuple[App, object, object]:
             drum_track=drum,
             event_queue=app._event_queue,
             port_label="main",
-            swing=swing,
         )
     ]
     return app, melodic, drum

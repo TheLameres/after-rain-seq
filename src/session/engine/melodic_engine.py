@@ -32,7 +32,6 @@ from src.session.engine.generators import (
 )
 from src.session.events.note_event import NoteEvent
 from src.session.model.melodic_track import MelodicTrack
-from src.sync.swing import SwingApplier
 from src.sync.transport_event import TransportEvent
 
 if TYPE_CHECKING:
@@ -49,7 +48,6 @@ class MelodicEngine:
         harmony: Гармонический слой для резолвинга ступеней.
         event_queue: Очередь для TransportEvent (разделяется с Transport).
         port_label: Метка MIDI-порта для событий.
-        swing: Применитель свинга (amount=0 — без свинга).
         horizon: Горизонт планирования в beats (по умолчанию 1 такт).
     """
 
@@ -59,7 +57,6 @@ class MelodicEngine:
         harmony: Harmony,
         event_queue: queue.Queue[TransportEvent],
         port_label: str | None,
-        swing: SwingApplier,
         horizon: float = 4.0,
         mutation_engine: MutationEngine | None = None,
     ) -> None:
@@ -67,7 +64,6 @@ class MelodicEngine:
         self._harmony = harmony
         self._queue = event_queue
         self._port_label = port_label
-        self._swing = swing
         self._scheduler = BeatScheduler(horizon=horizon)
         self._mutation_engine = mutation_engine
 
@@ -218,10 +214,9 @@ class MelodicEngine:
         """NoteEvent → пара TransportEvent (note_on + note_off).
 
         Ступень резолвится в MIDI-номер через Harmony (октава дорожки +
-        ``note.octave_offset`` — дрейф регистра); свинг применяется к
-        длительности относительно абсолютного beat (парность шагов свинга
-        следует музыкальной позиции, а не моменту доставки). Гейт уже
-        применён генератором — здесь только свинг.
+        ``note.octave_offset`` — дрейф регистра). Гейт уже применён
+        генератором; свинг намеренно оставлен Transport (plan §4.2), чтобы
+        применялся ровно в одном месте — на отправке в порт.
 
         Аргументы:
             note: Нота (ступень, звучащая длительность).
@@ -233,10 +228,9 @@ class MelodicEngine:
         midi_note = self._harmony.degree_to_note(
             note.degree, self._track.octave + note.octave_offset
         )
-        duration = note.duration
-        if self._swing.amount > 0.0:
-            duration = self._swing.apply_duration(base=duration, beat=abs_beat)
-        duration = max(duration, 0.0)
+        # Свинг здесь не применяется: он живёт в Transport (plan §4.2),
+        # на моменте отправки в порт. Движок отдаёт чистую музыкальную позицию.
+        duration = max(note.duration, 0.0)
 
         return [
             TransportEvent.note_on(

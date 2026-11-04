@@ -4,24 +4,20 @@ import queue
 
 from src.session.drum.drum_engine import DrumEngine
 from src.session.model.drum_track import DrumTrack
-from src.sync.swing import SwingApplier, SwingConfig
 from src.sync.transport_event import EventKind, TransportEvent
 
 
 def _make_engine(
     steps: int = 16,
-    swing_amount: float = 0.0,
     maxsize: int = 256,
 ) -> tuple[DrumEngine, queue.Queue[TransportEvent], DrumTrack]:
     """Создать DrumEngine с тестовой очередью."""
     dt = DrumTrack(name="Drum 1", steps=steps)
     q: queue.Queue[TransportEvent] = queue.Queue(maxsize=maxsize)
-    swing = SwingApplier(SwingConfig(amount=swing_amount))
     engine = DrumEngine(
         drum_track=dt,
         event_queue=q,
         port_label="Test Port",
-        swing=swing,
     )
     return engine, q, dt
 
@@ -88,23 +84,21 @@ def test_tick_respects_channel():
 # ---------------------------------------------------------------------------
 
 
-def test_swing_applied():
-    """При swing > 0 длительности изменяются."""
-    engine, q, dt = _make_engine(swing_amount=0.3)
+def test_engine_does_not_swing_durations():
+    """§4.2: движок отдаёт чистые длительности, свинг живёт в Transport."""
+    engine, q, dt = _make_engine()
     dt.lanes[0].pattern[0] = 1
     dt.lanes[0].pattern[1] = 1
     engine.tick(current_beat=0.0)
     events = _drain(q)
     assert len(events) == 2
-    # Свинг меняет длительности
-    d0 = events[0].duration
-    d1 = events[1].duration
-    assert d0 != d1  # чётный и нечётный шаги разные
+    # Чётный и нечётный шаги одинаковы: движок ничего не сдвигает.
+    assert events[0].duration == events[1].duration
 
 
-def test_no_swing_passthrough():
-    """При swing=0 длительности не меняются."""
-    engine, q, dt = _make_engine(swing_amount=0.0)
+def test_default_gate_duration():
+    """Длительность удара — DEFAULT_GATE, без преобразований."""
+    engine, q, dt = _make_engine()
     dt.lanes[0].pattern[0] = 1
     engine.tick(current_beat=0.0)
     events = _drain(q)

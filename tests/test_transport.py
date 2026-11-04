@@ -204,10 +204,9 @@ class TestSwingIntegration:
         )
         transport.process_events(current_beat=0.0)
         transport.all_notes_off()
-        # Позиционный свинг: результат зависит только от beat
-        assert transport.swing.apply_duration(base=0.5, beat=0.0) == pytest.approx(
-            0.375
-        )
+        # Позиционный свинг: результат зависит только от beat, не от паники
+        assert transport.swing.shift(0.0) == 0.0
+        assert transport.swing.shift(0.5) > 0.0
 
 
 class TestCCFlush:
@@ -264,13 +263,9 @@ class TestAllNotesOff:
         transport, _, _ = _make_transport(swing_amount=0.5)
         transport.all_notes_off()
         assert not hasattr(transport.swing, "_step")
-        # beat=0.5 → нечётный шаг (длинный), beat=1.0 → снова чётный
-        assert transport.swing.apply_duration(base=0.5, beat=0.5) == pytest.approx(
-            0.625
-        )
-        assert transport.swing.apply_duration(base=0.5, beat=1.0) == pytest.approx(
-            0.375
-        )
+        # beat=0.5 → нечётный шаг (задержан), beat=1.0 → снова чётный (вовремя)
+        assert transport.swing.shift(0.5) == pytest.approx(0.125)
+        assert transport.swing.shift(1.0) == 0.0
 
 
 class TestTransportProperties:
@@ -307,6 +302,60 @@ def test_transport_does_not_advance_swing_step() -> None:
     transport.process_events(current_beat=0.0)
 
     assert repr(swing) == before
+
+
+class TestSwingDelaysOnset:
+    """§4.2: swing is an onset delay and lives only in Transport."""
+
+    def test_even_step_is_not_delayed(self) -> None:
+        transport, q, registry = _make_transport(swing_amount=0.5)
+        q.put(
+            TransportEvent.note_on(
+                "Synth A", channel=0, note=60, velocity=100, duration=0.5, beat=0.0
+            )
+        )
+        transport.process_events(current_beat=0.0)
+        adapter = registry.get_output.return_value
+        adapter.note_on.assert_called_once()
+
+    def test_odd_step_is_held_until_due(self) -> None:
+        transport, q, registry = _make_transport(swing_amount=0.5)
+        # beat 0.5 -> odd 1/8 step -> delayed by (1/2) * 0.5 * 0.5 = 0.125 beats
+        q.put(
+            TransportEvent.note_on(
+                "Synth A", channel=0, note=62, velocity=100, duration=0.5, beat=0.5
+            )
+        )
+        transport.process_events(current_beat=0.5)
+        adapter = registry.get_output.return_value
+        adapter.note_on.assert_not_called()
+
+        # released once the timeline reaches the delayed onset
+        transport.process_events(current_beat=0.625)
+        adapter.note_on.assert_called_once()
+
+    def test_held_events_dropped_on_panic(self) -> None:
+        transport, q, registry = _make_transport(swing_amount=0.5)
+        q.put(
+            TransportEvent.note_on(
+                "Synth A", channel=0, note=62, velocity=100, duration=0.5, beat=0.5
+            )
+        )
+        transport.process_events(current_beat=0.5)
+        adapter = registry.get_output.return_value
+        adapter.note_on.assert_not_called()
+
+        transport.all_notes_off()
+        transport.process_events(current_beat=0.7)
+        adapter.note_on.assert_not_called()
+
+    def test_note_off_never_delayed(self) -> None:
+        """Swing moves the onset only; the pair keeps its length."""
+        transport, q, registry = _make_transport(swing_amount=0.5)
+        q.put(TransportEvent.note_off("Synth A", channel=0, note=62, beat=0.5))
+        transport.process_events(current_beat=0.5)
+        adapter = registry.get_output.return_value
+        adapter.note_off.assert_called_once()
 
 
 def test_transport_does_not_advance_swing_step() -> None:

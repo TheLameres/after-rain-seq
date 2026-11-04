@@ -12,7 +12,6 @@ import queue
 
 from src.session.events.drum_event import DrumEvent
 from src.session.model.drum_track import DrumTrack
-from src.sync.swing import SwingApplier
 from src.sync.transport_event import TransportEvent
 
 log = logging.getLogger(__name__)
@@ -25,7 +24,6 @@ class DrumEngine:
         drum_track: Drum-дорожка-источник.
         event_queue: Очередь для TransportEvent (разделяется с Transport).
         port_label: Метка MIDI-порта для событий.
-        swing: Применитель свинга (amount=0 — без свинга).
     """
 
     def __init__(
@@ -33,12 +31,10 @@ class DrumEngine:
         drum_track: DrumTrack,
         event_queue: queue.Queue[TransportEvent],
         port_label: str | None,
-        swing: SwingApplier,
     ) -> None:
         self._track = drum_track
         self._queue = event_queue
         self._port_label = port_label
-        self._swing = swing
         self._bpm = 120.0
 
     # ------------------------------------------------------------------
@@ -127,7 +123,7 @@ class DrumEngine:
     def _to_transport_event(
         self, ev: DrumEvent, current_beat: float, port: str
     ) -> TransportEvent:
-        """Конвертировать DrumEvent в TransportEvent с применением свинга.
+        """Конвертировать DrumEvent в TransportEvent.
 
         Аргументы:
             ev: Drum-событие.
@@ -137,15 +133,9 @@ class DrumEngine:
         Returns:
             TransportEvent для транспорта.
         """
+        # Свинг здесь не применяется: он живёт в Transport (plan §4.2),
+        # на моменте отправки в порт.
         duration = ev.duration
-        if self._swing.amount > 0.0:
-            # §4.2: чётность берётся из номера шага паттерна, а не из порядка
-            # вызовов. Сетка ударных — шаг паттерна (1/16 при steps=16),
-            # поэтому соседние шаги чередуются, а одновременные удары разных
-            # лейнов получают одинаковую длительность.
-            step_duration = 4.0 / self._track.steps
-            step_index = round(ev.beat / step_duration)
-            duration = self._swing.apply_step(base=duration, step_index=step_index)
 
         return TransportEvent.note_on(
             port_label=port,

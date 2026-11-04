@@ -478,7 +478,6 @@ class App:
                     drum_track=track,
                     event_queue=self._event_queue,
                     port_label=track.port or "default",
-                    swing=self._swing_applier,
                 )
                 self._drum_engines.append(engine)
                 log.info("DrumEngine создан для %s", track.name)
@@ -527,7 +526,6 @@ class App:
                     harmony=self._harmony,
                     event_queue=self._event_queue,
                     port_label=track.port or "default",
-                    swing=self._swing_applier,
                     mutation_engine=self._mutation_engine,
                 )
                 self._melodic_engines.append(engine)
@@ -639,7 +637,6 @@ class App:
                 drum_track=track,
                 event_queue=self._event_queue,
                 port_label=None,  # порт назначит route_track
-                swing=self._swing_applier,
             )
             self._drum_engines.append(drum_engine)
             log.info("DrumEngine создан для %s (on demand)", track.name)
@@ -652,7 +649,6 @@ class App:
                 harmony=self._harmony,
                 event_queue=self._event_queue,
                 port_label=None,
-                swing=self._swing_applier,
                 mutation_engine=self._mutation_engine,
             )
             self._melodic_engines.append(melodic_engine)
