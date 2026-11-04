@@ -38,7 +38,10 @@ class Stage[T](Protocol):
     полагается на то, что промежуточные списки можно безопасно сравнивать.
     """
 
-    name: str
+    @property
+    def name(self) -> str:
+        """Имя этапа для ``Chain.names``; только чтение — этапы неизменяемы."""
+        ...
 
     def process(self, batch: list[T], ctx: StageContext) -> list[T]: ...
 

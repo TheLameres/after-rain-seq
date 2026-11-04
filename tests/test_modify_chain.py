@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.session.modify import Chain, StageContext
+import pytest
+
+from src.session.modify import Chain, Stage, StageContext
 
 CTX = StageContext(beat=0.0, bpm=120.0, track_name="Pad 1")
 
@@ -100,3 +102,31 @@ class TestTruncationToZero:
         snapshot = [Ev(e.beat, e.tag) for e in src]
         Chain([Append("z"), DropAll()]).process(src, CTX)
         assert src == snapshot
+
+
+class TestStageProtocolAcceptsReadOnlyName:
+    """`Stage.name` объявлен как property, а не изменяемое поле.
+
+    Иначе frozen-этапы (`ArpeggiateStage`, `DensifyStage`) не проходят
+    проверку протокола: pyright пишет «"name" is not read-only in protocol»,
+    mypy — «Protocol member Stage.name expected settable variable».
+    """
+
+    def test_frozen_stage_satisfies_protocol(self) -> None:
+        from src.session.modify.arpeggiate import ArpeggiateStage
+        from src.session.modify.densify import DensifyStage
+
+        stages: list[Stage[Ev]] = [ArpeggiateStage(), DensifyStage(1.0)]
+        assert [s.name for s in stages] == ["arpeggiate", "densify"]
+
+    def test_protocol_name_is_read_only(self) -> None:
+        from src.session.modify.arpeggiate import ArpeggiateStage
+
+        stage = ArpeggiateStage()
+        with pytest.raises(AttributeError):
+            stage.name = "changed"  # type: ignore[misc]
+
+    def test_mutable_stage_still_accepted(self) -> None:
+        """Этап с обычным атрибутом тоже подходит — протокол только читает."""
+        stages: list[Stage[Ev]] = [Append("a")]
+        assert stages[0].name == "append"
