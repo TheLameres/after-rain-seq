@@ -746,7 +746,6 @@ class App:
                     profile=profile,
                     sources=tuple(track.sources),
                     mutation_count=int(track.mutation_count),
-                    frozen=bool(track.mutate == 0.0),
                     port=track.port,
                     gate=float(gate),
                     voicing=voicing,

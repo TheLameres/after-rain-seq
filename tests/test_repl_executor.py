@@ -39,7 +39,7 @@ class MockControl(EngineControl):
                     profile="pad",
                     sources=(),
                     mutation_count=3,
-                    frozen=True,
+                    mutate=0.0,
                 ),
                 TrackSummary(
                     name="Drum 1",
@@ -47,7 +47,7 @@ class MockControl(EngineControl):
                     profile="drum",
                     sources=(),
                     mutation_count=7,
-                    frozen=False,
+                    mutate=0.5,
                 ),
             ),
             total_mutations=10,

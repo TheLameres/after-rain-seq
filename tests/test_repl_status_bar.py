@@ -20,8 +20,16 @@ def make_snapshot(**overrides) -> StatusSnapshot:
         "root": "A",
         "scale": "dorian",
         "tracks": (
-            TrackSummary("Pad 1", "melodic", "pad", (), 0, False),
-            TrackSummary("Drum 1", "drum", "drum", (), 0, False),
+            TrackSummary(
+                name="Pad 1",
+                kind="melodic",
+                profile="pad",
+                sources=(),
+                mutation_count=0,
+            ),
+            TrackSummary(
+                name="Drum 1", kind="drum", profile="drum", sources=(), mutation_count=0
+            ),
         ),
         "total_mutations": 12,
         "ports": (PortSummary("Synth A", "connected", "IAC Bus 1"),),

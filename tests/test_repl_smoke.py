@@ -34,7 +34,15 @@ class StubControl(EngineControl):
             link_peers=0,
             root="F#",
             scale="aeolian",
-            tracks=(TrackSummary("Pad 1", "melodic", "pad", (), 0, False),),
+            tracks=(
+                TrackSummary(
+                    name="Pad 1",
+                    kind="melodic",
+                    profile="pad",
+                    sources=(),
+                    mutation_count=0,
+                ),
+            ),
             total_mutations=0,
             ports=(),
             log_error=None,

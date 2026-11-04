@@ -44,7 +44,6 @@ def make_track(
         profile=profile,
         sources=sources,
         mutation_count=0,
-        frozen=mutate == 0.0,
         port=port,
         gate=gate,
         voicing="1-3-5" if kind == "melodic" else "",

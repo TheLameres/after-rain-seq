@@ -44,8 +44,10 @@ class TrackSummary:
     mutation_count: int
     """Изменений с последней заморозки."""
 
-    frozen: bool
-    """True, когда ``mutate == 0`` (заморожена)."""
+    @property
+    def frozen(self) -> bool:
+        """True, когда ``mutate == 0`` (заморожена). Производное — не хранится (§4.12)."""
+        return self.mutate == 0.0
 
     port: str | None = None
     """Метка MIDI-порта; None — дорожка не привязана (молчит)."""
