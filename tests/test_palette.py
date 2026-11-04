@@ -21,6 +21,7 @@ from src.devices.push2.palette import (
     bgr565,
     rgb,
 )
+from src.devices.push2.track_colors import track_color
 
 # ---------------------------------------------------------------------------
 # Структура
@@ -236,3 +237,34 @@ def test_bgr565_matches_color_type() -> None:
 def test_palette_module_imports_without_side_effects() -> None:
     """Модуль статический: никакого обращения к железу при импорте."""
     assert palette.PALETTE is PALETTE
+
+
+# ---------------------------------------------------------------------------
+# §4.8 — индекс палитры для пэда, а не RGB
+# ---------------------------------------------------------------------------
+
+
+def test_pad_index_returns_real_palette_index() -> None:
+    """Пэд Push 2 адресуется индексом палитры, а не RGB-тройкой."""
+    from src.devices.push2.track_colors import pad_index
+
+    for slot in range(16):
+        index = pad_index(slot)
+        assert index in TRACK_PAD_INDICES
+        assert 0 <= index < len(PALETTE)
+
+
+def test_pad_index_matches_track_color() -> None:
+    """Цвет дисплея (BGR565) и индекс пэда — про один и тот же оттенок."""
+    from src.devices.push2.track_colors import pad_index
+
+    for slot in range(16):
+        assert bgr565(pad_index(slot)) == track_color(slot)
+
+
+def test_all_sixteen_slots_are_distinct_pads() -> None:
+    """16 дорожек получают 16 разных пэдов."""
+    from src.devices.push2.track_colors import pad_index
+
+    pads = [pad_index(slot) for slot in range(16)]
+    assert len(set(pads)) == 16

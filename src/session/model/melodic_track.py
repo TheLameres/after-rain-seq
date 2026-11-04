@@ -52,8 +52,9 @@ class MelodicTrack(Track):
         octave: int | None = None,
         gate: float | None = None,
         degrees: list[int] | None = None,
+        color_slot: int | None = None,
     ) -> None:
-        super().__init__(name=name, channel=channel, port=port)
+        super().__init__(name=name, channel=channel, port=port, color_slot=color_slot)
         if profile_name not in PROFILES:
             raise ValueError(f"Неизвестный профиль: {profile_name!r}")
         self.profile: MelodicProfile = PROFILES[profile_name]

@@ -71,6 +71,9 @@ class TrackSummary:
     channel: int = 0
     """MIDI-канал дорожки (0–15)."""
 
+    color_slot: int | None = None
+    """Слот цвета в палитре Push 2 (0–15); None — слот не выделен (§4.8)."""
+
 
 @dataclass(frozen=True)
 class StatusSnapshot:

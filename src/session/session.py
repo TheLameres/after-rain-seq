@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 
+from src.devices.push2.palette import TRACK_PAD_INDICES
 from src.session.graph.track_graph import TrackGraph
 from src.session.model.drum_track import DrumTrack
 from src.session.model.melodic_profile import PROFILES
@@ -80,12 +81,30 @@ class Session:
             profile_name=profile,
             channel=channel,
             port=port,
+            color_slot=self._alloc_color_slot(),
             **kwargs,  # type: ignore[arg-type]
         )
         self._tracks[name] = track
         self._graph.add_track(name)
         log.debug("Session: создан %s", track)
         return track
+
+    def _alloc_color_slot(self) -> int | None:
+        """Первый свободный слот цвета (§4.8).
+
+        Слот — свойство дорожки, а не её позиция в списке: занятые слоты
+        соседей не переезжают при удалении. Освободившийся слот достаётся
+        следующей созданной дорожке, поэтому цвета не «уползают».
+
+        Returns:
+            Индекс 0..15 (позиция в ``TRACK_PAD_INDICES``) либо ``None``,
+            когда все слоты заняты (дорожек больше, чем цветов).
+        """
+        used = {t.color_slot for t in self._tracks.values() if t.color_slot is not None}
+        for slot in range(len(TRACK_PAD_INDICES)):
+            if slot not in used:
+                return slot
+        return None
 
     def _alloc_channel(self) -> int:
         """Первый свободный MIDI-канал, не занятый ни одной дорожкой.
@@ -131,7 +150,13 @@ class Session:
         if drum_count >= self.MAX_DRUM_TRACKS:
             raise ValueError(f"Лимит drum-машин: {self.MAX_DRUM_TRACKS}")
         name = self._next_name("drum")
-        track = DrumTrack(name=name, channel=channel, port=port, steps=steps)
+        track = DrumTrack(
+            name=name,
+            channel=channel,
+            port=port,
+            steps=steps,
+            color_slot=self._alloc_color_slot(),
+        )
         self._tracks[name] = track
         self._graph.add_track(name)
         log.debug("Session: создан %s", track)

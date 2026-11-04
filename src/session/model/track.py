@@ -42,10 +42,15 @@ class Track(ABC):
         name: str,
         channel: int = 0,
         port: str | None = None,
+        color_slot: int | None = None,
     ) -> None:
         self.name = name
         self.port = port
         self.channel = channel
+        # §4.8: цвет — свойство дорожки, а не позиция в списке. Слот выдаётся
+        # Session при создании и не переиспользуется, пока дорожка жива:
+        # удаление соседа не перекрашивает остальные.
+        self.color_slot: int | None = color_slot
         self.muted = False
         self._sources: tuple[str, ...] = ()
         self.outbox: list[TrackEvent] = []

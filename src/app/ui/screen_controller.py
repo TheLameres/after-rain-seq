@@ -960,7 +960,8 @@ class ScreenController:
                 frozen=t.frozen,
                 mutation_count=t.mutation_count,
                 selected=i == self.state.selected % PAGE_SIZE,
-                color=track_color(start + i),  # свой цвет у каждой дорожки
+                # §4.8: цвет — свойство дорожки, а не позиция на странице.
+                color=track_color(t.color_slot) if t.color_slot is not None else 0,
             )
             for i, t in enumerate(page)
         )
@@ -983,9 +984,16 @@ class ScreenController:
             )
         return rows
 
-    def _track_color_for_selection(self) -> int:
-        """Цвет выбранной дорожки (по абсолютному индексу в сессии)."""
-        return track_color(self.state.selected)
+    def _track_color_for_selection(self, snap: StatusSnapshot) -> int:
+        """Цвет выбранной дорожки — её собственный слот (§4.8).
+
+        Один и тот же слот даёт один и тот же цвет на TRACKS, GEN и MACRO;
+        страница и позиция в списке на это не влияют.
+        """
+        track = self._selected_track(snap)
+        if track is None or track.color_slot is None:
+            return 0
+        return track_color(track.color_slot)
 
     def _track_detail(self, snap: StatusSnapshot) -> TrackDetailView | None:
         track = self._selected_track(snap)
@@ -1002,7 +1010,7 @@ class ScreenController:
             voicing=track.voicing,
             density=track.density if track.density_applicable else None,
             mutate=track.mutate,
-            color=self._track_color_for_selection(),
+            color=self._track_color_for_selection(snap),
         )
 
     def _track_macro(self, snap: StatusSnapshot) -> TrackMacroView | None:
@@ -1024,5 +1032,5 @@ class ScreenController:
             channel=track.channel,
             port=track.port,
             macros=macros,
-            color=self._track_color_for_selection(),
+            color=self._track_color_for_selection(snap),
         )

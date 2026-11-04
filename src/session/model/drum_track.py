@@ -71,8 +71,9 @@ class DrumTrack(Track):
         channel: int = 9,
         port: str | None = None,
         steps: int = 16,
+        color_slot: int | None = None,
     ) -> None:
-        super().__init__(name=name, channel=channel, port=port)
+        super().__init__(name=name, channel=channel, port=port, color_slot=color_slot)
         self.lanes: list[DrumLane] = [
             DrumLane(note=note, name=lname) for note, lname in _GM_DRUM_MAP
         ]

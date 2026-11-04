@@ -772,3 +772,90 @@ def test_sources_normalises_list():
     t = MelodicTrack(name="Sub 1", profile_name="sub")
     t.sources = ["Pad 1"]  # type: ignore[assignment]
     assert t.sources == ("Pad 1",)
+
+
+# ---------------------------------------------------------------------------
+# §4.8 — цвет дорожки как свойство, а не позиция в списке
+# ---------------------------------------------------------------------------
+
+
+def test_color_slot_assigned_on_create():
+    """Каждая созданная дорожка получает слот цвета."""
+    s = Session()
+    pad = s.create_melodic_track("pad")
+    drum = s.create_drum_track()
+    assert pad.color_slot == 0
+    assert drum.color_slot == 1
+
+
+def test_color_slots_are_distinct():
+    """Слоты не повторяются, пока есть свободные."""
+    s = Session()
+    tracks = [s.create_melodic_track("pad") for _ in range(5)]
+    slots = [t.color_slot for t in tracks]
+    assert len(set(slots)) == len(slots)
+
+
+def test_color_slot_survives_neighbour_removal():
+    """Удаление соседа не перекрашивает оставшиеся дорожки."""
+    s = Session()
+    first = s.create_melodic_track("pad")
+    second = s.create_melodic_track("pad")
+    third = s.create_melodic_track("pad")
+    before = {t.name: t.color_slot for t in (second, third)}
+
+    s.remove_track(first.name)
+
+    assert second.color_slot == before[second.name]
+    assert third.color_slot == before[third.name]
+
+
+def test_freed_color_slot_is_reused():
+    """Освободившийся слот достаётся следующей дорожке, цвета не уползают."""
+    s = Session()
+    first = s.create_melodic_track("pad")
+    s.create_melodic_track("pad")
+    s.remove_track(first.name)
+
+    fresh = s.create_melodic_track("pad")
+    assert fresh.color_slot == 0
+
+
+def test_full_session_gives_every_track_its_own_color():
+    """16 дорожек (15 мелодик + drum) — 16 разных слотов, без повторов.
+
+    При текущих лимитах (MAX_TRACKS=16, 15 каналов под мелодику) слот
+    всегда находится; ветка ``None`` — защита на случай роста лимитов.
+    """
+    from src.devices.push2.palette import TRACK_PAD_INDICES
+
+    s = Session()
+    tracks = [s.create_melodic_track("pad") for _ in range(len(TRACK_PAD_INDICES) - 1)]
+    tracks.append(s.create_drum_track())
+
+    slots = [t.color_slot for t in tracks]
+    assert len(slots) == len(TRACK_PAD_INDICES)
+    assert None not in slots
+    assert len(set(slots)) == len(slots)
+
+
+def test_alloc_color_slot_returns_none_when_exhausted():
+    """Все слоты заняты — None, а не исключение (§4.8)."""
+    from src.devices.push2.palette import TRACK_PAD_INDICES
+
+    s = Session()
+    pad = s.create_melodic_track("pad")
+    # заполняем занятые слоты напрямую: канал-лимит не даёт сделать это созданием
+    s._tracks = {
+        f"Fake {i}": type(pad)(name=f"Fake {i}", color_slot=i)
+        for i in range(len(TRACK_PAD_INDICES))
+    }
+    assert s._alloc_color_slot() is None
+
+
+def test_color_slot_reaches_snapshot():
+    """App прокидывает слот в TrackSummary — UI читает его оттуда."""
+    from src.repl.status import TrackSummary
+
+    fields = TrackSummary.__dataclass_fields__
+    assert "color_slot" in fields

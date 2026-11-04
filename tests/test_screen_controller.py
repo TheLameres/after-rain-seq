@@ -10,10 +10,12 @@ from src.app.ui.macro_axes import MacroAxes
 from src.app.ui.screen_controller import (
     LED_GREEN,
     MELODIC_PROFILES,
+    PAGE_SIZE,
     ScreenController,
 )
 from src.app.ui.screen_id import ScreenId
 from src.app.ui.ui_event import UiEvent
+from src.devices.push2.track_colors import track_color
 from src.repl.engine_control import EngineControl
 from src.repl.status import PortSummary, StatusSnapshot, TrackSummary
 
@@ -31,6 +33,7 @@ def make_track(
     density: float = 1.0,
     density_applicable: bool = False,
     kind: str = "melodic",
+    color_slot: int | None = 0,
 ) -> TrackSummary:
     return TrackSummary(
         name=name,
@@ -47,6 +50,7 @@ def make_track(
         density=density,
         density_applicable=density_applicable,
         channel=channel,
+        color_slot=color_slot,
     )
 
 
@@ -893,11 +897,63 @@ class TestFlashAndView:
 
     def test_track_rows_carry_distinct_colors(self) -> None:
         """У соседних дорожек разные цвета (маркеры в списке TRACKS)."""
-        tracks = tuple(make_track(f"T{i}") for i in range(4))
+        tracks = tuple(make_track(f"T{i}", color_slot=i) for i in range(4))
         ctl, engine, _ = make_controller(tracks)
         view = ctl.build_view(engine.get_status(), NOW)
         colors = [r.color for r in view.tracks or ()]
         assert len(set(colors)) == 4
+
+    def test_track_color_is_its_own_slot_after_neighbour_removed(self) -> None:
+        """§4.8: цвет не переезжает при удалении соседней дорожки."""
+        tracks = (
+            make_track("T0", color_slot=0),
+            make_track("T1", color_slot=1),
+            make_track("T2", color_slot=2),
+        )
+        ctl, engine, _ = make_controller(tracks)
+        before = {
+            r.name: r.color
+            for r in ctl.build_view(engine.get_status(), NOW).tracks or ()
+        }
+
+        # сосед T0 удалён — T1 и T2 остаются со своими цветами
+        engine.tracks = tracks[1:]
+        after = {
+            r.name: r.color
+            for r in ctl.build_view(engine.get_status(), NOW).tracks or ()
+        }
+
+        assert after["T1"] == before["T1"]
+        assert after["T2"] == before["T2"]
+
+    def test_tracks_and_gen_share_one_color(self) -> None:
+        """§4.8: TRACKS и GEN показывают один цвет для одной дорожки."""
+        tracks = (make_track("A", color_slot=5), make_track("B", color_slot=9))
+        ctl, engine, _ = make_controller(tracks)
+        view = ctl.build_view(engine.get_status(), NOW)
+        row = {r.name: r.color for r in view.tracks or ()}
+
+        ctl.state.selected = 0
+        btn(ctl, "Clip")
+        detail = ctl.build_view(engine.get_status(), NOW)
+        assert detail.track is not None
+        assert detail.track.name == "A"
+        assert row["A"] == detail.track.color
+
+    def test_color_survives_page_shift(self) -> None:
+        """§4.8: на второй странице строка показывает свой цвет, а не track_color(8)."""
+        tracks = tuple(make_track(f"T{i}", color_slot=i) for i in range(10))
+        ctl, engine, _ = make_controller(tracks)
+        # page — вычисляемое свойство UiState; курсор переезжает на 2-ю страницу
+        ctl.state.selected = PAGE_SIZE
+        rows = [
+            r
+            for r in ctl.build_view(engine.get_status(), NOW).tracks or ()
+            if r.name != "—"
+        ]
+        first = rows[0]
+        assert first.name == "T8"
+        assert first.color == track_color(8)
 
     def test_build_view_ports(self) -> None:
         ctl, engine, _ = make_controller((make_track("A"),))

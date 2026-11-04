@@ -761,6 +761,7 @@ class App:
                     density=float(density),
                     density_applicable=density_applicable,
                     channel=int(track.channel),
+                    color_slot=track.color_slot,
                 )
             )
         return tuple(summaries)
