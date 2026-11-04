@@ -23,6 +23,7 @@ from src.app.ui.macro_axes import MacroAxes
 from src.app.ui.screen_controller import ScreenController
 from src.app.ui.ui_event import UiEvent
 from src.app.ui.ui_queue import UiEventQueue
+from src.core.engine_result import EngineResult
 from src.devices.push2.push2_device import Push2Device
 from src.harmony.harmony import Harmony
 from src.midi.factory import create_registry
@@ -160,7 +161,7 @@ class App:
         self._ui_queue = UiEventQueue()
         self._ui = ScreenController(
             self._engine_control,
-            MacroAxes.from_ui_config(loaded.ui_config),
+            MacroAxes.from_ui_config(loaded.ui_config.macro_axes),
             cc_sender=self._send_cc,
             ui_config=loaded.ui_config,
         )
@@ -538,61 +539,65 @@ class App:
     # Маршрутизация дорожек (REPL: track route / track unroute)
     # ------------------------------------------------------------------
 
-    def route_track(self, name: str, label: str) -> str:
+    def route_track(self, name: str, label: str) -> EngineResult:
         """Привязать дорожку к MIDI-порту (рантайм, без рестарта).
 
         Старый порт глушится all_notes_off, новый подхватывается на
         следующем событии (Transport резолвит адаптер по метке каждый раз).
         """
         if self._session is None:
-            return "error: session not available"
+            return EngineResult.fail("session not available")
         track = self._session.get_track(name)
         if track is None:
-            return f"error: track {name!r} not found"
+            return EngineResult.fail(f"track {name!r} not found")
         if self._port_manager is None:
-            return "error: port manager not available"
+            return EngineResult.fail("port manager not available")
         if self._port_manager.get_state(label) is None:
             known = ", ".join(s.label for s in self._port_manager.all_states())
-            return f"error: unknown port label {label!r} (configured: {known})"
+            return EngineResult.fail(
+                f"unknown port label {label!r} (configured: {known})"
+            )
         engine = self._find_engine(track)
         if engine is None:
             engine = self._create_engine_for(track)
         if engine is None:
-            return f"error: cannot route track {name!r} (engine prerequisites missing)"
+            return EngineResult.fail(
+                f"cannot route track {name!r} (engine prerequisites missing)"
+            )
         old = engine.set_port_label(label)
         track.port = label
         self._silence_old_port(old, label)
         log.info("Track %s routed → port %r (was %r)", name, label, old)
         was = f' (was "{old}")' if old else ""
-        return f'track "{name}" → port "{label}"{was}'
+        return EngineResult.ok(f'track "{name}" → port "{label}"{was}')
 
-    def unroute_track(self, name: str) -> str:
+    def unroute_track(self, name: str) -> EngineResult:
         """Отключить дорожку от порта — тишина, сессия живёт."""
         if self._session is None:
-            return "error: session not available"
+            return EngineResult.fail("session not available")
         track = self._session.get_track(name)
         if track is None:
-            return f"error: track {name!r} not found"
+            return EngineResult.fail(f"track {name!r} not found")
         engine = self._find_engine(track)
         if engine is None:
             # Движка нет — просто снимаем привязку, глушить нечего.
             track.port = None
-            return f'track "{name}" disconnected'
+            return EngineResult.ok(f'track "{name}" disconnected')
         old = engine.set_port_label(None)
         track.port = None
         self._silence_old_port(old, None)
         log.info("Track %s disconnected (was port %r)", name, old)
         was = f' (was "{old}")' if old else ""
-        return f'track "{name}" disconnected{was}'
+        return EngineResult.ok(f'track "{name}" disconnected{was}')
 
-    def drop_track(self, name: str) -> str:
+    def drop_track(self, name: str) -> EngineResult:
         """Удалить дорожку вместе с её движком (глушит порт перед удалением)."""
         if self._session is None:
-            return "error: session not available"
+            return EngineResult.fail("session not available")
         try:
             self._session.remove_track(name)
         except ValueError as exc:
-            return f"error: {exc}"
+            return EngineResult.fail(f"{exc}")
         removed = False
         for melodic_engine in list(self._melodic_engines):
             if melodic_engine.track.name == name:
@@ -605,7 +610,7 @@ class App:
                 self._drum_engines.remove(drum_engine)
                 removed = True
         log.info("Track %s deleted (engine removed: %s)", name, removed)
-        return f'deleted track "{name}"'
+        return EngineResult.ok(f'deleted track "{name}"')
 
     def _silence_engine(self, engine: MelodicEngine | DrumEngine) -> None:
         """All notes off на текущем порту движка и перевод в тишину."""

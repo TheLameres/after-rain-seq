@@ -9,10 +9,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from src.core.engine_result import EngineResult
 from src.repl.command import Command, CommandResult
 from src.repl.confirm import DEFAULT_PROMPT, ConfirmPolicy, ConfirmPrompt
 from src.repl.engine_control import EngineControl
 from src.repl.parser import CommandParser, CommandSpec
+from src.repl.render import render_text
 from src.repl.status import StatusSnapshot, TrackSummary
 
 DEFAULT_LOG_LINES: int = 20
@@ -231,10 +233,9 @@ class CommandExecutor:
         raise KeyError(name)
 
     @staticmethod
-    def _feedback(text: str) -> CommandResult:
-        """Фидбек из движка: префикс ``error:`` → код 1."""
-        code = 1 if text.startswith("error:") else 0
-        return CommandResult(output=text, code=code)
+    def _feedback(result: EngineResult) -> CommandResult:
+        """Результат движка → вывод REPL; ошибка → код 1."""
+        return CommandResult(output=render_text(result), code=1 if result.error else 0)
 
 
 # ---------------------------------------------------------------------------

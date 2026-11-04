@@ -60,7 +60,7 @@ class TestMacroAxesDefaults:
         ui = UiConfig(
             macro_axes={"tone": ["mod_wheel"], "space": ["reverb"], "depth": ["filter"]}
         )
-        axes = MacroAxes.from_ui_config(ui)
+        axes = MacroAxes.from_ui_config(ui.macro_axes)
         assert axes.cc_params(MacroAxis.TONE) == ("mod_wheel",)
 
     def test_non_cc_axis_raises(self) -> None:

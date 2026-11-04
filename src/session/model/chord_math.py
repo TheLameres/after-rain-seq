@@ -10,22 +10,34 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
-from typing import TYPE_CHECKING
+from typing import Protocol
 
 from src.harmony.voicings import Voicing
 from src.session.events.chord_event import ChordEvent
+from src.session.model.melodic_profile import MelodicProfile
 from src.session.model.pattern_spec import (
     FAMILY_CC_ONLY,
     FAMILY_CHORD_SOURCE,
 )
 
-if TYPE_CHECKING:
-    from src.session.model.melodic_track import MelodicTrack
-
 log = logging.getLogger(__name__)
 
 
-def chord_degrees_for(track: MelodicTrack, degree: int) -> tuple[int, ...]:
+class ChordTrack(Protocol):
+    """Что математике аккордов нужно от дорожки.
+
+    Протокол вместо ``MelodicTrack``: модель не импортирует конкретный класс
+    дорожки, поэтому цикл ``chord_math`` ↔ ``melodic_track`` исчезает.
+    ``MelodicTrack`` подходит структурно и менять его не нужно.
+    """
+
+    degrees: list[int]
+    inversion: int
+    voicing: str
+    profile: MelodicProfile
+
+
+def chord_degrees_for(track: ChordTrack, degree: int) -> tuple[int, ...]:
     """Ступени аккорда для ступени прогрессии: войсинг + обращение.
 
     Общая математика для публикации ``ChordEvent`` (граф) и генерации
@@ -45,7 +57,7 @@ def chord_degrees_for(track: MelodicTrack, degree: int) -> tuple[int, ...]:
     return degs
 
 
-def pattern_length(track: MelodicTrack) -> float:
+def pattern_length(track: ChordTrack) -> float:
     """Длина паттерна профиля в beats (период циклического повторения).
 
     Аргументы:

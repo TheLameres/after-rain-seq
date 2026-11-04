@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from src.core.engine_result import EngineResult
 from src.repl.confirm import ConfirmPolicy
 from src.repl.engine_control import EngineControl
 from src.repl.executor import CommandExecutor
@@ -58,100 +59,100 @@ class MockControl(EngineControl):
         self.calls.append(("get_logs", (n,)))
         return [f"line-{i}" for i in range(min(n, 5))]
 
-    def start_transport(self) -> str:
+    def start_transport(self) -> EngineResult:
         self.calls.append(("start_transport", ()))
-        return "transport started"
+        return EngineResult.ok("transport started")
 
-    def stop_transport(self) -> str:
+    def stop_transport(self) -> EngineResult:
         self.calls.append(("stop_transport", ()))
-        return "transport stopped"
+        return EngineResult.ok("transport stopped")
 
-    def set_bpm(self, bpm: float) -> str:
+    def set_bpm(self, bpm: float) -> EngineResult:
         if bpm < 20 or bpm > 300:
-            return f"error: bpm {bpm} out of range"
+            return EngineResult.fail(f"bpm {bpm} out of range")
         self.bpm = bpm
-        return f"bpm set to {bpm:.1f}"
+        return EngineResult.ok(f"bpm set to {bpm:.1f}")
 
-    def set_swing(self, amount: float) -> str:
-        return f"swing set to {amount:.2f}"
+    def set_swing(self, amount: float) -> EngineResult:
+        return EngineResult.ok(f"swing set to {amount:.2f}")
 
-    def request_clock_source(self, source: str) -> str:
+    def request_clock_source(self, source: str) -> EngineResult:
         self.calls.append(("request_clock_source", (source,)))
         if source == "link":
-            return "error: Ableton Link not installed"
-        return f"switched to {source} on next beat"
+            return EngineResult.fail("Ableton Link not installed")
+        return EngineResult.ok(f"switched to {source} on next beat")
 
-    def rescan_ports(self) -> str:
+    def rescan_ports(self) -> EngineResult:
         self.calls.append(("rescan_ports", ()))
-        return "scan complete: no changes"
+        return EngineResult.ok("scan complete: no changes")
 
-    def switch_port(self, label: str, match: str) -> str:
+    def switch_port(self, label: str, match: str) -> EngineResult:
         self.calls.append(("switch_port", (label, match)))
         if label not in ("main", "keys"):
-            return f"error: unknown port label: {label!r}"
-        return f"switch scheduled: {label!r} → match {match!r}"
+            return EngineResult.fail(f"unknown port label: {label!r}")
+        return EngineResult.ok(f"switch scheduled: {label!r} → match {match!r}")
 
-    def set_root(self, root: str) -> str:
+    def set_root(self, root: str) -> EngineResult:
         self.calls.append(("set_root", (root,)))
-        return f"root set to {root}"
+        return EngineResult.ok(f"root set to {root}")
 
-    def set_scale(self, name: str) -> str:
+    def set_scale(self, name: str) -> EngineResult:
         self.calls.append(("set_scale", (name,)))
-        return f"scale set to {name}"
+        return EngineResult.ok(f"scale set to {name}")
 
     def list_tracks(self) -> list[TrackSummary]:
         return list(self.get_status().tracks)
 
-    def create_track(self, profile: str, channel: int | None = None) -> str:
+    def create_track(self, profile: str, channel: int | None = None) -> EngineResult:
         if profile == "bogus":
-            return "error: unknown profile"
+            return EngineResult.fail("unknown profile")
         self.calls.append(("create_track", (profile, channel)))
-        return 'created track "Pad 9"'
+        return EngineResult.ok('created track "Pad 9"', track="Pad 9")
 
-    def set_track_channel(self, name: str, channel: int) -> str:
+    def set_track_channel(self, name: str, channel: int) -> EngineResult:
         self.calls.append(("set_track_channel", (name, channel)))
-        return f'track "{name}": channel 0 → {channel}'
+        return EngineResult.ok(f'track "{name}": channel 0 → {channel}')
 
-    def remove_track(self, name: str) -> str:
+    def remove_track(self, name: str) -> EngineResult:
         self.calls.append(("remove_track", (name,)))
-        return f'deleted track "{name}"'
+        return EngineResult.ok(f'deleted track "{name}"')
 
-    def route_track(self, name: str, label: str) -> str:
+    def route_track(self, name: str, label: str) -> EngineResult:
         self.calls.append(("route_track", (name, label)))
-        return f'track "{name}" → port "{label}" (was "default")'
+        return EngineResult.ok(f'track "{name}" → port "{label}" (was "default")')
 
-    def unroute_track(self, name: str) -> str:
+    def unroute_track(self, name: str) -> EngineResult:
         self.calls.append(("unroute_track", (name,)))
-        return f'track "{name}" disconnected (was "main")'
+        return EngineResult.ok(f'track "{name}" disconnected (was "main")')
 
-    def freeze(self, name: str | None = None) -> str:
+    def freeze(self, name: str | None = None) -> EngineResult:
         self.calls.append(("freeze", (name,)))
-        return "all tracks frozen" if name is None else f"froze {name}"
+        return EngineResult.ok("all tracks frozen" if name is None else f"froze {name}")
 
-    def evolve(self) -> str:
+    def evolve(self) -> EngineResult:
         self.calls.append(("evolve", ()))
-        return "all tracks evolved"
+        return EngineResult.ok("all tracks evolved")
 
-    def create_drum_track(self) -> str:
-        return "created track"
+    def create_drum_track(self) -> EngineResult:
+        return EngineResult.ok("created track", track="Pad 9")
 
-    def set_track_sources(self, name: str, *sources: str) -> str:
+    def set_track_sources(self, name: str, *sources: str) -> EngineResult:
         self.calls.append(("set_track_sources", (name, *sources)))
-        return "sources set"
+        return EngineResult.ok("sources set")
 
-    def set_track_gate(self, name: str, gate: float) -> str:
-        return "gate set"
+    def set_track_gate(self, name: str, gate: float) -> EngineResult:
+        return EngineResult.ok("gate set")
 
-    def set_track_density(self, name: str, density: float) -> str:
+    def set_track_density(self, name: str, density: float) -> EngineResult:
         self.calls.append(("set_track_density", (name, density)))
-        return "density set"
+        return EngineResult.ok("density set")
 
-    def set_track_mutate(self, name: str, mutate: float) -> str:
+    def set_track_mutate(self, name: str, mutate: float) -> EngineResult:
         self.calls.append(("set_track_mutate", (name, mutate)))
-        return "mutate set"
+        return EngineResult.ok("mutate set")
 
-    def evolve_track(self, name: str) -> str:
-        return "evolved"
+    def evolve_track(self, name: str) -> EngineResult:
+        return EngineResult.ok("evolved")
 
 
 @pytest.fixture

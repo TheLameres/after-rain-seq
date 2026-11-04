@@ -11,19 +11,56 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import Protocol
 
-from src.harmony.harmony import HarmonyError
+from src.core.engine_result import EngineResult
+from src.harmony.harmony import Harmony, HarmonyError
 from src.repl.engine_control import EngineControl
 from src.repl.log_buffer import LogBuffer
 from src.repl.status import StatusSnapshot, TrackSummary
 from src.session.model.drum_track import DrumTrack
 from src.session.model.melodic_profile import PROFILES
 from src.session.model.melodic_track import MelodicTrack
+from src.session.session import Session
+from src.sync.clock_manager import ClockManager
 from src.sync.clock_source import ClockSource
+from src.sync.ports import PortManager
+from src.sync.routing import PortRegistry
+from src.sync.swing import SwingApplier
+from src.sync.transport import Transport
 
-if TYPE_CHECKING:
-    from src.app.application import App
+
+class AppPorts(Protocol):
+    """Что фасаду команд нужно от приложения: ровно те 12 членов, что он читает.
+
+    Протокол вместо ``App``: ``engine_control`` не импортирует приложение, и
+    цикл ``application`` ↔ ``engine_control`` исчезает. ``App`` подходит
+    структурно; при появлении нового члена, который фасад читает, он должен
+    попасть сюда, иначе mypy/pyright это покажут.
+    """
+
+    @property
+    def session(self) -> Session | None: ...
+    @property
+    def clock_manager(self) -> ClockManager | None: ...
+    @property
+    def port_manager(self) -> PortManager | None: ...
+    @property
+    def port_registry(self) -> PortRegistry | None: ...
+    @property
+    def harmony(self) -> Harmony | None: ...
+    @property
+    def transport(self) -> Transport | None: ...
+    @property
+    def swing_applier(self) -> SwingApplier | None: ...
+    @property
+    def status_snapshot(self) -> StatusSnapshot: ...
+
+    def set_sync_bpm(self, value: float) -> None: ...
+    def route_track(self, name: str, label: str) -> EngineResult: ...
+    def unroute_track(self, name: str) -> EngineResult: ...
+    def drop_track(self, name: str) -> EngineResult: ...
+
 
 # Диапазон BPM (совпадает с валидацией SyncConfig).
 MIN_BPM: float = 20.0
@@ -38,7 +75,7 @@ class AppEngineControl(EngineControl):
         log_buffer: Кольцевой буфер логов (``logs``/``log_error``).
     """
 
-    def __init__(self, app: App, log_buffer: LogBuffer | None = None) -> None:
+    def __init__(self, app: AppPorts, log_buffer: LogBuffer | None = None) -> None:
         self._app = app
         self._log_buffer = log_buffer
 
@@ -65,95 +102,101 @@ class AppEngineControl(EngineControl):
     # Транспорт и клок
     # ------------------------------------------------------------------
 
-    def start_transport(self) -> str:
+    def start_transport(self) -> EngineResult:
         """Запустить транспорт (старт ClockManager)."""
         cm = self._app.clock_manager
         if cm is None:
-            return "error: clock subsystem disabled (sync.enabled=false)"
+            return EngineResult.fail("clock subsystem disabled (sync.enabled=false)")
         if cm.state.running:
-            return "transport already running"
+            return EngineResult.ok("transport already running")
         cm.start()
-        return f"transport started (clock: {cm.state.source.name.lower()})"
+        return EngineResult.ok(
+            f"transport started (clock: {cm.state.source.name.lower()})"
+        )
 
-    def stop_transport(self) -> str:
+    def stop_transport(self) -> EngineResult:
         """Остановить транспорт: all notes off + остановка клока."""
         cm = self._app.clock_manager
         if cm is None:
-            return "error: clock subsystem disabled (sync.enabled=false)"
+            return EngineResult.fail("clock subsystem disabled (sync.enabled=false)")
         if not cm.state.running:
-            return "transport is not running"
+            return EngineResult.ok("transport is not running")
         transport = self._app.transport
         if transport is not None:
             transport.all_notes_off()
         cm.stop()
-        return "transport stopped (all notes off)"
+        return EngineResult.ok("transport stopped (all notes off)")
 
-    def set_bpm(self, bpm: float) -> str:
+    def set_bpm(self, bpm: float) -> EngineResult:
         """Установить BPM через App.set_sync_bpm() (механизм энкодера)."""
         if not MIN_BPM <= bpm <= MAX_BPM:
-            return f"error: bpm {bpm} out of range {MIN_BPM:.0f}..{MAX_BPM:.0f}"
+            return EngineResult.fail(
+                f"bpm {bpm} out of range {MIN_BPM:.0f}..{MAX_BPM:.0f}"
+            )
         self._app.set_sync_bpm(bpm)
-        return f"bpm set to {bpm:.1f}"
+        return EngineResult.ok(f"bpm set to {bpm:.1f}")
 
-    def set_swing(self, amount: float) -> str:
+    def set_swing(self, amount: float) -> EngineResult:
         """Установить свинг (0.0–1.0) в рантайме."""
         if not 0.0 <= amount <= 1.0:
-            return f"error: swing must be 0..1, got {amount}"
+            return EngineResult.fail(f"swing must be 0..1, got {amount}")
         swing = self._app.swing_applier
         if swing is None:
-            return "error: swing not available"
+            return EngineResult.fail("swing not available")
         swing.set_amount(amount)
-        return f"swing set to {amount:.2f}"
+        return EngineResult.ok(f"swing set to {amount:.2f}")
 
-    def request_clock_source(self, source: str) -> str:
+    def request_clock_source(self, source: str) -> EngineResult:
         """Переключить источник клока на ближайшей доле."""
         cm = self._app.clock_manager
         if cm is None:
-            return "error: clock subsystem disabled (sync.enabled=false)"
+            return EngineResult.fail("clock subsystem disabled (sync.enabled=false)")
         mapping = {s.name.lower(): s for s in ClockSource}
         target = mapping.get(source.lower())
         if target is None:
             known = ", ".join(sorted(mapping))
-            return f"error: unknown clock source {source!r} (choose: {known})"
+            return EngineResult.fail(
+                f"unknown clock source {source!r} (choose: {known})"
+            )
         if cm.current_source is target:
-            return f"already using {source.lower()}"
+            return EngineResult.ok(f"already using {source.lower()}")
         cm.request_source(target)
         state = cm.state
         if state.error:
-            return f"error: {state.error}"
-        return f"switched to {source.lower()} on next beat"
+            return EngineResult.fail(f"{state.error}")
+        return EngineResult.ok(f"switched to {source.lower()} on next beat")
 
     # ------------------------------------------------------------------
     # Порты
     # ------------------------------------------------------------------
 
-    def rescan_ports(self) -> str:
+    def rescan_ports(self) -> EngineResult:
         """Принудительный rescan портов (тот же путь, что hot-plug poll)."""
         pm = self._app.port_manager
         registry = self._app.port_registry
         if pm is None or registry is None:
-            return "error: port manager not available"
+            return EngineResult.fail("port manager not available")
         events = pm.poll()
         for event in events:
             registry.handle_port_event(event)
         if not events:
-            return "scan complete: no changes"
+            return EngineResult.ok("scan complete: no changes")
         changes = "; ".join(
             f"{e.label}: {e.old_status.name.lower()} → {e.new_status.name.lower()}"
             for e in events
         )
-        return f"scan complete: {len(events)} change(s): {changes}"
+        return EngineResult.ok(f"scan complete: {len(events)} change(s): {changes}")
 
-    def switch_port(self, label: str, match: str) -> str:
+    def switch_port(self, label: str, match: str) -> EngineResult:
         """Перенаправить лейбл порта на другое устройство (рантайм-only)."""
         pm = self._app.port_manager
         if pm is None:
-            return "error: port manager not available"
+            return EngineResult.fail("port manager not available")
         try:
             pm.request_switch(label, match)
         except ValueError as exc:
-            return f"error: {exc}"
-        return (
+            return EngineResult.fail(f"{exc}")
+        return EngineResult.ok(
             f"switch scheduled: {label!r} → match {match!r}; "
             "applies on next poll (~2 s) — verify with 'ports'"
         )
@@ -162,27 +205,27 @@ class AppEngineControl(EngineControl):
     # Гармония
     # ------------------------------------------------------------------
 
-    def set_root(self, root: str) -> str:
+    def set_root(self, root: str) -> EngineResult:
         """Сменить тонику (HarmonyError → текст)."""
         harmony = self._app.harmony
         if harmony is None:
-            return "error: harmony not available"
+            return EngineResult.fail("harmony not available")
         try:
             harmony.set_root(root)
         except HarmonyError as exc:
-            return f"error: {exc}"
-        return f"root set to {harmony.root} ({harmony.scale_name})"
+            return EngineResult.fail(f"{exc}")
+        return EngineResult.ok(f"root set to {harmony.root} ({harmony.scale_name})")
 
-    def set_scale(self, name: str) -> str:
+    def set_scale(self, name: str) -> EngineResult:
         """Сменить лад с валидацией (пентатоника отклоняется)."""
         harmony = self._app.harmony
         if harmony is None:
-            return "error: harmony not available"
+            return EngineResult.fail("harmony not available")
         try:
             harmony.set_scale(name)
         except HarmonyError as exc:
-            return f"error: {exc}"
-        return f"scale set to {harmony.scale_name} ({harmony.root})"
+            return EngineResult.fail(f"{exc}")
+        return EngineResult.ok(f"scale set to {harmony.scale_name} ({harmony.root})")
 
     # ------------------------------------------------------------------
     # Сессия
@@ -192,7 +235,7 @@ class AppEngineControl(EngineControl):
         """Сводки дорожек из снапшота (топологический порядок)."""
         return list(self.get_status().tracks)
 
-    def create_track(self, profile: str, channel: int | None = None) -> str:
+    def create_track(self, profile: str, channel: int | None = None) -> EngineResult:
         """Создать melodic-дорожку профиля (лимиты — текстом).
 
         Канал: ``None`` — автоназначение первого свободного (без слипания
@@ -200,17 +243,20 @@ class AppEngineControl(EngineControl):
         """
         session = self._app.session
         if session is None:
-            return "error: session not available"
+            return EngineResult.fail("session not available")
         if profile not in PROFILES:
             known = ", ".join(sorted(PROFILES))
-            return f"error: unknown profile {profile!r} (choose: {known})"
+            return EngineResult.fail(f"unknown profile {profile!r} (choose: {known})")
         try:
             track = session.create_melodic_track(profile, channel=channel)
         except ValueError as exc:
-            return f"error: {exc}"
-        return f'created track "{track.name}" (profile {profile}, ch {track.channel})'
+            return EngineResult.fail(f"{exc}")
+        return EngineResult.ok(
+            f'created track "{track.name}" (profile {profile}, ch {track.channel})',
+            track=track.name,
+        )
 
-    def set_track_channel(self, name: str, channel: int) -> str:
+    def set_track_channel(self, name: str, channel: int) -> EngineResult:
         """Сменить MIDI-канал дорожки в рантайме (движки подхватывают live).
 
         Аргументы:
@@ -222,132 +268,135 @@ class AppEngineControl(EngineControl):
         """
         session = self._app.session
         if session is None:
-            return "error: session not available"
+            return EngineResult.fail("session not available")
         track = session.get_track(name)
         if track is None:
-            return f"error: track {name!r} not found"
+            return EngineResult.fail(f"track {name!r} not found")
         if not 0 <= channel <= 15:
-            return f"error: channel must be 0..15, got {channel}"
+            return EngineResult.fail(f"channel must be 0..15, got {channel}")
         old = track.channel
         track.channel = channel
-        return f'track "{name}": channel {old} → {channel}'
+        return EngineResult.ok(f'track "{name}": channel {old} → {channel}')
 
-    def remove_track(self, name: str) -> str:
+    def remove_track(self, name: str) -> EngineResult:
         """Удалить дорожку (вместе с движком); зависимые получают sources = ()."""
         return self._app.drop_track(name)
 
-    def route_track(self, name: str, label: str) -> str:
+    def route_track(self, name: str, label: str) -> EngineResult:
         """Привязать дорожку к MIDI-порту (делегирует App)."""
         return self._app.route_track(name, label)
 
-    def unroute_track(self, name: str) -> str:
+    def unroute_track(self, name: str) -> EngineResult:
         """Отключить дорожку от порта (делегирует App)."""
         return self._app.unroute_track(name)
 
-    def freeze(self, name: str | None = None) -> str:
+    def freeze(self, name: str | None = None) -> EngineResult:
         """Заморозить все дорожки или одну по имени."""
         session = self._app.session
         if session is None:
-            return "error: session not available"
+            return EngineResult.fail("session not available")
         if name is None:
             session.freeze_all()
-            return "all tracks frozen"
+            return EngineResult.ok("all tracks frozen")
         track = session.get_track(name)
         if track is None:
-            return f"error: track {name!r} not found"
+            return EngineResult.fail(f"track {name!r} not found")
         if not isinstance(track, (MelodicTrack, DrumTrack)):
-            return f"error: cannot freeze track {name!r}"
+            return EngineResult.fail(f"cannot freeze track {name!r}")
         track.freeze()  # MelodicTrack: mutate=0; DrumTrack: базовый паттерн
-        return f'froze track "{name}"'
+        return EngineResult.ok(f'froze track "{name}"')
 
-    def evolve(self) -> str:
+    def evolve(self) -> EngineResult:
         """Разморозить и продолжить эволюцию."""
         session = self._app.session
         if session is None:
-            return "error: session not available"
+            return EngineResult.fail("session not available")
         session.evolve_all()
-        return "all tracks evolved"
+        return EngineResult.ok("all tracks evolved")
 
     # ------------------------------------------------------------------
     # Сессия — расширения D2 (экраны TRACK/TRACKS)
     # ------------------------------------------------------------------
 
-    def create_drum_track(self) -> str:
+    def create_drum_track(self) -> EngineResult:
         """Создать drum-дорожку (лимит 2 — текстом из ValueError)."""
         session = self._app.session
         if session is None:
-            return "error: session not available"
+            return EngineResult.fail("session not available")
         try:
             track = session.create_drum_track()
         except ValueError as exc:
-            return f"error: {exc}"
-        return f'created track "{track.name}" (drum, ch {track.channel})'
+            return EngineResult.fail(f"{exc}")
+        return EngineResult.ok(
+            f'created track "{track.name}" (drum, ch {track.channel})',
+            track=track.name,
+        )
 
-    def set_track_sources(self, name: str, *sources: str) -> str:
+    def set_track_sources(self, name: str, *sources: str) -> EngineResult:
         """Назначить источники; цикл графа — человекочитаемый текст."""
         session = self._app.session
         if session is None:
-            return "error: session not available"
+            return EngineResult.fail("session not available")
         if session.get_track(name) is None:
-            return f"error: track {name!r} not found"
+            return EngineResult.fail(f"track {name!r} not found")
         for src in sources:
             if session.get_track(src) is None:
-                return f"error: source track {src!r} not found"
+                return EngineResult.fail(f"source track {src!r} not found")
         try:
             session.set_sources(name, *sources)
         except ValueError as exc:
-            return f"error: {exc}"
+            return EngineResult.fail(f"{exc}")
         joined = "+".join(sources) if sources else "—"
-        return f'track "{name}": sources = {joined}'
+        return EngineResult.ok(f'track "{name}": sources = {joined}')
 
-    def _melodic_track(self, name: str) -> MelodicTrack | str:
-        """MelodicTrack по имени или текст ошибки."""
+    def _melodic_track(self, name: str) -> MelodicTrack | EngineResult:
+        """MelodicTrack по имени или результат с ошибкой."""
         session = self._app.session
         if session is None:
-            return "error: session not available"
+            return EngineResult.fail("session not available")
         track = session.get_track(name)
         if track is None:
-            return f"error: track {name!r} not found"
+            return EngineResult.fail(f"track {name!r} not found")
         if not isinstance(track, MelodicTrack):
-            return f"error: track {name!r} is not melodic"
+            return EngineResult.fail(f"track {name!r} is not melodic")
         return track
 
-    def set_track_gate(self, name: str, gate: float) -> str:
+    def set_track_gate(self, name: str, gate: float) -> EngineResult:
         """Установить гейт melodic-дорожки (0.0–1.0)."""
         track = self._melodic_track(name)
-        if isinstance(track, str):
+        if isinstance(track, EngineResult):
             return track
         if not 0.0 <= gate <= 1.0:
-            return f"error: gate must be 0..1, got {gate}"
+            return EngineResult.fail(f"gate must be 0..1, got {gate}")
         track.gate = float(gate)
-        return f'track "{name}": gate = {gate:.2f}'
+        return EngineResult.ok(f'track "{name}": gate = {gate:.2f}')
 
-    def set_track_density(self, name: str, density: float) -> str:
+    def set_track_density(self, name: str, density: float) -> EngineResult:
         """Установить плотность паттерна (0.0–1.0, макро-ось DEN)."""
         track = self._melodic_track(name)
-        if isinstance(track, str):
+        if isinstance(track, EngineResult):
             return track
         if not 0.0 <= density <= 1.0:
-            return f"error: density must be 0..1, got {density}"
+            return EngineResult.fail(f"density must be 0..1, got {density}")
         track.density = float(density)
-        return f'track "{name}": density = {density:.2f}'
+        return EngineResult.ok(f'track "{name}": density = {density:.2f}')
 
-    def set_track_mutate(self, name: str, mutate: float) -> str:
+    def set_track_mutate(self, name: str, mutate: float) -> EngineResult:
         """Установить вероятность мутации (0.0–1.0, макро-ось MUT)."""
         session = self._app.session
         if session is None:
-            return "error: session not available"
+            return EngineResult.fail("session not available")
         track = session.get_track(name)
         if track is None:
-            return f"error: track {name!r} not found"
+            return EngineResult.fail(f"track {name!r} not found")
         if not isinstance(track, (MelodicTrack, DrumTrack)):
-            return f"error: track {name!r} is not mutable"
+            return EngineResult.fail(f"track {name!r} is not mutable")
         if not 0.0 <= mutate <= 1.0:
-            return f"error: mutate must be 0..1, got {mutate}"
+            return EngineResult.fail(f"mutate must be 0..1, got {mutate}")
         track.mutate = float(mutate)
-        return f'track "{name}": mutate = {mutate:.2f}'
+        return EngineResult.ok(f'track "{name}": mutate = {mutate:.2f}')
 
-    def set_track_muted(self, name: str, muted: bool) -> str:
+    def set_track_muted(self, name: str, muted: bool) -> EngineResult:
         """Заглушить/разглушить дорожку (§4.6).
 
         Дорожка продолжает генерировать и мутировать — глушится только
@@ -355,23 +404,23 @@ class AppEngineControl(EngineControl):
         """
         session = self._app.session
         if session is None:
-            return "error: session not available"
+            return EngineResult.fail("session not available")
         track = session.get_track(name)
         if track is None:
-            return f"error: track {name!r} not found"
+            return EngineResult.fail(f"track {name!r} not found")
         track.muted = bool(muted)
         state = "muted" if track.muted else "unmuted"
-        return f'track "{name}": {state}'
+        return EngineResult.ok(f'track "{name}": {state}')
 
-    def evolve_track(self, name: str) -> str:
+    def evolve_track(self, name: str) -> EngineResult:
         """Разморозить одну дорожку (MelodicTrack: mutate=0.5, DrumTrack: 0.5)."""
         session = self._app.session
         if session is None:
-            return "error: session not available"
+            return EngineResult.fail("session not available")
         track = session.get_track(name)
         if track is None:
-            return f"error: track {name!r} not found"
+            return EngineResult.fail(f"track {name!r} not found")
         if not isinstance(track, (MelodicTrack, DrumTrack)):
-            return f"error: cannot evolve track {name!r}"
+            return EngineResult.fail(f"cannot evolve track {name!r}")
         track.mutate = 0.5
-        return f'evolved track "{name}"'
+        return EngineResult.ok(f'evolved track "{name}"')

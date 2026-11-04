@@ -22,7 +22,6 @@
 from __future__ import annotations
 
 import logging
-import re
 from collections.abc import Callable
 from dataclasses import replace
 from typing import TYPE_CHECKING
@@ -36,6 +35,7 @@ from src.app.ui.ui_state import (
     PAGE_SIZE,
     UiState,
 )
+from src.core.engine_result import EngineResult
 from src.devices.display_state import (
     DemoView,
     PortRowView,
@@ -53,6 +53,7 @@ from src.devices.push2.screens import DEFAULT_SCREENS, scale_root_rows
 from src.devices.push2.track_colors import track_color
 from src.devices.push2.widgets import SLOT_COUNT
 from src.repl.engine_control import EngineControl
+from src.repl.render import render_text
 from src.repl.status import StatusSnapshot, TrackSummary
 from src.session import PROFILES
 
@@ -64,7 +65,9 @@ log = logging.getLogger(__name__)
 # Вкладки переключаются выделенными кнопками (Clip/Device) и Upper Row 5
 # (PORTS) — см. ниже. Upper Row освобождён под будущее (D3+).
 PORTS_BUTTON = "Mix"  # CC 112 — экран PORTS (план Ф0.3)
-DEMO_BUTTON = "Note"  # CC 50 — демо-экран фреймворка (вкладки сверху/снизу, 8 энкодеров)
+DEMO_BUTTON = (
+    "Note"  # CC 50 — демо-экран фреймворка (вкладки сверху/снизу, 8 энкодеров)
+)
 
 # Выделенные кнопки вне табов (переразметка 02.11.2026).
 SESSION_BUTTON = "Session"  # CC 51 — экран TRACKS
@@ -106,7 +109,6 @@ WIZARD_ROUTE_NONE = "—"  # первый вариант шага route: соз�
 
 # Имя созданной дорожки из фидбека фасада ('created track "NAME" (...)').
 # Формат производит только AppEngineControl — парсинг надёжнее diff'а снапшота.
-_CREATED_TRACK_RE = re.compile(r'^created track "([^"]+)"')
 
 # 12 тоник для GLOBAL E1.
 ROOTS: tuple[str, ...] = (
@@ -413,8 +415,11 @@ class ScreenController:
                 # Shift+Delete — удаление выбранной дорожки (как раньше).
                 track = self._selected_track(snap)
                 if track is not None:
-                    feedback = self._engine.remove_track(track.name)
-                    self.state.flash(feedback, now, self._flash_seconds)
+                    self.state.flash(
+                        render_text(self._engine.remove_track(track.name)),
+                        now,
+                        self._flash_seconds,
+                    )
             else:
                 # Delete вооружается: следующий LOWER ROW удалит дорожку.
                 self.state.delete_armed = not self.state.delete_armed
@@ -426,9 +431,7 @@ class ScreenController:
             self._command(self._engine.rescan_ports(), now)
         # Прочие кнопки не назначены (Duplicate/Layout/Note — резерв).
 
-    def _scale_root_button(
-        self, name: str, now: float, snap: StatusSnapshot
-    ) -> bool:
+    def _scale_root_button(self, name: str, now: float, snap: StatusSnapshot) -> bool:
         """SCALE: Upper/Lower Row 1–6 выбирают тонику; прочие кнопки — не наши.
 
         Возвращает True, если кнопка обработана (тогда общий обработчик Lower Row
@@ -467,8 +470,11 @@ class ScreenController:
             self.state.delete_armed = False
             track = self._selected_track(snap)
             if track is not None:
-                feedback = self._engine.remove_track(track.name)
-                self.state.flash(feedback, now, self._flash_seconds)
+                self.state.flash(
+                    render_text(self._engine.remove_track(track.name)),
+                    now,
+                    self._flash_seconds,
+                )
             return
         if self._selected_track(snap) is not None:
             self.state.screen = ScreenId.TRACK_GEN
@@ -569,17 +575,17 @@ class ScreenController:
         port = options[self.state.wizard_index]
         profile = self.state.wizard_profile
         self._wizard_cancel()  # сначала закрыть (сброс profile), потом создавать
-        feedback = (
+        created = (
             self._engine.create_drum_track()
             if profile is None
             else self._engine.create_track(profile)
         )
-        match = _CREATED_TRACK_RE.match(feedback)
-        if port != WIZARD_ROUTE_NONE and match is not None:
-            route_feedback = self._engine.route_track(match.group(1), port)
-            if route_feedback.startswith("error:"):
-                feedback = route_feedback
-        self.state.flash(feedback, now, self._flash_seconds)
+        result = created
+        if port != WIZARD_ROUTE_NONE and not created.error:
+            routed = self._engine.route_track(str(created.data["track"]), port)
+            if routed.error:
+                result = routed
+        self.state.flash(render_text(result), now, self._flash_seconds)
 
     def _move_cursor(self, delta: int, snap: StatusSnapshot) -> None:
         limit = self._cursor_limit(snap)
@@ -799,9 +805,9 @@ class ScreenController:
             self.state.demo_top = (self.state.demo_top + inc) % len(DEMO_TOP_TABS)
         else:
             inc = 1 if name == "Down" else -1
-            self.state.demo_bottom = (
-                self.state.demo_bottom + inc
-            ) % len(DEMO_BOTTOM_TABS)
+            self.state.demo_bottom = (self.state.demo_bottom + inc) % len(
+                DEMO_BOTTOM_TABS
+            )
 
     def _demo_encoder(self, idx: int, increment: int) -> None:
         """E1/E2 — вкладки, E3–E8 — значения 0..127 (пишутся только в UiState)."""
@@ -894,7 +900,10 @@ class ScreenController:
             if not any(isinstance(item, Button) for item in row):
                 continue
             rows.append(
-                (row_name, tuple(getattr(item, "active", False) for item in row[:SLOT_COUNT]))
+                (
+                    row_name,
+                    tuple(getattr(item, "active", False) for item in row[:SLOT_COUNT]),
+                )
             )
         return tuple(rows)
 
@@ -902,10 +911,10 @@ class ScreenController:
     # Хелперы view
     # ------------------------------------------------------------------
 
-    def _command(self, feedback: str, now: float) -> None:
-        """Фидбек команды: error: → flash; успех — не показываем (шум)."""
-        if feedback.startswith("error:"):
-            self.state.flash(feedback, now, self._flash_seconds)
+    def _command(self, result: EngineResult, now: float) -> None:
+        """Результат команды: ошибка → flash; успех — не показываем (шум)."""
+        if result.error:
+            self.state.flash(render_text(result), now, self._flash_seconds)
 
     def _selected_track(self, snap: StatusSnapshot) -> TrackSummary | None:
         idx = self.state.selected

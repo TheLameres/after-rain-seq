@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
+from src.core.engine_result import EngineResult
 from src.repl.status import StatusSnapshot, TrackSummary
 
 
@@ -38,23 +39,23 @@ class EngineControl(ABC):
     # ------------------------------------------------------------------
 
     @abstractmethod
-    def start_transport(self) -> str:
+    def start_transport(self) -> EngineResult:
         """Запустить транспорт. Вернуть фидбек."""
 
     @abstractmethod
-    def stop_transport(self) -> str:
+    def stop_transport(self) -> EngineResult:
         """Остановить транспорт (all notes off). Вернуть фидбек."""
 
     @abstractmethod
-    def set_bpm(self, bpm: float) -> str:
+    def set_bpm(self, bpm: float) -> EngineResult:
         """Установить BPM (20..300). Вернуть фидбек или текст ошибки."""
 
     @abstractmethod
-    def set_swing(self, amount: float) -> str:
+    def set_swing(self, amount: float) -> EngineResult:
         """Установить свинг (0.0–1.0, D2: экран GLOBAL E3). Вернуть фидбек."""
 
     @abstractmethod
-    def request_clock_source(self, source: str) -> str:
+    def request_clock_source(self, source: str) -> EngineResult:
         """Переключить источник клока на ближайшей доле.
 
         Returns:
@@ -67,11 +68,11 @@ class EngineControl(ABC):
     # ------------------------------------------------------------------
 
     @abstractmethod
-    def rescan_ports(self) -> str:
+    def rescan_ports(self) -> EngineResult:
         """Принудительный rescan портов. Вернуть фидбек."""
 
     @abstractmethod
-    def switch_port(self, label: str, match: str) -> str:
+    def switch_port(self, label: str, match: str) -> EngineResult:
         """Перенаправить лейбл порта на другое устройство (рантайм-only).
 
         Вернуть фидбек или текст ошибки (неизвестный лейбл и т.п.).
@@ -84,11 +85,11 @@ class EngineControl(ABC):
     # ------------------------------------------------------------------
 
     @abstractmethod
-    def set_root(self, root: str) -> str:
+    def set_root(self, root: str) -> EngineResult:
         """Сменить тонику. Вернуть фидбек или текст ошибки."""
 
     @abstractmethod
-    def set_scale(self, name: str) -> str:
+    def set_scale(self, name: str) -> EngineResult:
         """Сменить лад (валидация 8 ладов). Вернуть фидбек или ошибку."""
 
     # ------------------------------------------------------------------
@@ -100,37 +101,37 @@ class EngineControl(ABC):
         """Сводки дорожек (из снапшота)."""
 
     @abstractmethod
-    def create_track(self, profile: str, channel: int | None = None) -> str:
+    def create_track(self, profile: str, channel: int | None = None) -> EngineResult:
         """Создать melodic-дорожку профиля. Вернуть фидбек или ошибку.
 
         ``channel=None`` — автоназначение первого свободного канала.
         """
 
     @abstractmethod
-    def set_track_channel(self, name: str, channel: int) -> str:
+    def set_track_channel(self, name: str, channel: int) -> EngineResult:
         """Сменить MIDI-канал дорожки в рантайме. Вернуть фидбек или ошибку."""
 
     @abstractmethod
-    def remove_track(self, name: str) -> str:
+    def remove_track(self, name: str) -> EngineResult:
         """Удалить дорожку. Вернуть фидбек или ошибку."""
 
     @abstractmethod
-    def route_track(self, name: str, label: str) -> str:
+    def route_track(self, name: str, label: str) -> EngineResult:
         """Привязать дорожку к MIDI-порту. Вернуть фидбек или ошибку.
 
         Старый порт глушится all_notes_off. Рантайм-only.
         """
 
     @abstractmethod
-    def unroute_track(self, name: str) -> str:
+    def unroute_track(self, name: str) -> EngineResult:
         """Отключить дорожку от порта (тишина). Вернуть фидбек или ошибку."""
 
     @abstractmethod
-    def freeze(self, name: str | None = None) -> str:
+    def freeze(self, name: str | None = None) -> EngineResult:
         """Заморозить все дорожки (без имени) или одну. Вернуть фидбек."""
 
     @abstractmethod
-    def evolve(self) -> str:
+    def evolve(self) -> EngineResult:
         """Разморозить и продолжить эволюцию. Вернуть фидбек."""
 
     # ------------------------------------------------------------------
@@ -138,11 +139,11 @@ class EngineControl(ABC):
     # ------------------------------------------------------------------
 
     @abstractmethod
-    def create_drum_track(self) -> str:
+    def create_drum_track(self) -> EngineResult:
         """Создать drum-дорожку. Вернуть фидбек или текст ошибки (лимиты)."""
 
     @abstractmethod
-    def set_track_sources(self, name: str, *sources: str) -> str:
+    def set_track_sources(self, name: str, *sources: str) -> EngineResult:
         """Назначить источники дорожке (максимум 2).
 
         Вернуть фидбек или текст ошибки: цикл графа, несуществующая
@@ -150,23 +151,23 @@ class EngineControl(ABC):
         """
 
     @abstractmethod
-    def set_track_gate(self, name: str, gate: float) -> str:
+    def set_track_gate(self, name: str, gate: float) -> EngineResult:
         """Установить гейт melodic-дорожки (0.0–1.0). Вернуть фидбек/ошибку."""
 
     @abstractmethod
-    def set_track_density(self, name: str, density: float) -> str:
+    def set_track_density(self, name: str, density: float) -> EngineResult:
         """Установить плотность паттерна (0.0–1.0, макро-ось DEN).
 
         Вернуть фидбек или текст ошибки.
         """
 
     @abstractmethod
-    def set_track_mutate(self, name: str, mutate: float) -> str:
+    def set_track_mutate(self, name: str, mutate: float) -> EngineResult:
         """Установить вероятность мутации (0.0–1.0, макро-ось MUT).
 
         0 = заморожена (как freeze()). Вернуть фидбек или текст ошибки.
         """
 
     @abstractmethod
-    def evolve_track(self, name: str) -> str:
+    def evolve_track(self, name: str) -> EngineResult:
         """Разморозить одну дорожку (симметрия freeze). Вернуть фидбек."""

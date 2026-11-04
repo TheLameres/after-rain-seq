@@ -10,14 +10,23 @@ MidiPortConfig   — описывает MIDI-порты устройства д�
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from src.devices.base import ControllerDevice
+
+class DeviceLike(Protocol):
+    """То, что реестр получает от фабрики: объект, который умеет подключиться.
+
+    Протокол вместо ``ControllerDevice``: определение устройства не импортирует
+    базовый класс устройства, и цикл ``devices.definition`` ↔ ``devices.base``
+    исчезает. ``ControllerDevice`` подходит структурно.
+    """
+
+    def connect(self, config: DeviceConfig) -> None: ...
 
 
 class DeviceConfig(BaseModel):
@@ -29,7 +38,7 @@ class DeviceConfig(BaseModel):
 
     enabled: bool = False
 
-    def apply_runtime_opts(self, simulate: bool) -> "DeviceConfig":
+    def apply_runtime_opts(self, simulate: bool) -> DeviceConfig:
         """Apply runtime overrides before passing config to device.connect().
 
         Base implementation is a no-op. Subclasses override to merge in
@@ -106,9 +115,7 @@ class DeviceDefinition:
 
     # --- Config и factory ---
     config_class: type[DeviceConfig]
-    device_factory: Callable[
-        [], ControllerDevice
-    ]  # lazy — вызывается только при коннекте
+    device_factory: Callable[[], DeviceLike]  # lazy — вызывается только при коннекте
 
     # --- UI capabilities ---
     midi_ports: MidiPortConfig = field(default_factory=MidiPortConfig)

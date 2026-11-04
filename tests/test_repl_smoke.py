@@ -12,6 +12,7 @@ import threading
 from prompt_toolkit.input.defaults import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 
+from src.core.engine_result import EngineResult
 from src.repl.confirm import ConfirmPolicy
 from src.repl.engine_control import EngineControl
 from src.repl.repl import Repl
@@ -42,74 +43,74 @@ class StubControl(EngineControl):
     def get_logs(self, n: int) -> list[str]:
         return ["smoke-log-line"]
 
-    def start_transport(self) -> str:
-        return "transport started"
+    def start_transport(self) -> EngineResult:
+        return EngineResult.ok("transport started")
 
-    def stop_transport(self) -> str:
-        return "transport stopped"
+    def stop_transport(self) -> EngineResult:
+        return EngineResult.ok("transport stopped")
 
-    def set_bpm(self, bpm: float) -> str:
-        return f"bpm set to {bpm:.1f}"
+    def set_bpm(self, bpm: float) -> EngineResult:
+        return EngineResult.ok(f"bpm set to {bpm:.1f}")
 
-    def set_swing(self, amount: float) -> str:
-        return f"swing set to {amount:.2f}"
+    def set_swing(self, amount: float) -> EngineResult:
+        return EngineResult.ok(f"swing set to {amount:.2f}")
 
-    def request_clock_source(self, source: str) -> str:
-        return f"switched to {source} on next beat"
+    def request_clock_source(self, source: str) -> EngineResult:
+        return EngineResult.ok(f"switched to {source} on next beat")
 
-    def rescan_ports(self) -> str:
-        return "scan complete: no changes"
+    def rescan_ports(self) -> EngineResult:
+        return EngineResult.ok("scan complete: no changes")
 
-    def switch_port(self, label: str, match: str) -> str:
-        return f"switch scheduled: {label!r} → match {match!r}"
+    def switch_port(self, label: str, match: str) -> EngineResult:
+        return EngineResult.ok(f"switch scheduled: {label!r} → match {match!r}")
 
-    def set_root(self, root: str) -> str:
-        return f"root set to {root}"
+    def set_root(self, root: str) -> EngineResult:
+        return EngineResult.ok(f"root set to {root}")
 
-    def set_scale(self, name: str) -> str:
-        return f"scale set to {name}"
+    def set_scale(self, name: str) -> EngineResult:
+        return EngineResult.ok(f"scale set to {name}")
 
     def list_tracks(self) -> list[TrackSummary]:
         return list(self.get_status().tracks)
 
-    def create_track(self, profile: str, channel: int | None = None) -> str:
-        return 'created track "Pad 9"'
+    def create_track(self, profile: str, channel: int | None = None) -> EngineResult:
+        return EngineResult.ok('created track "Pad 9"', track="Pad 9")
 
-    def set_track_channel(self, name: str, channel: int) -> str:
-        return f'track "{name}": channel → {channel}'
+    def set_track_channel(self, name: str, channel: int) -> EngineResult:
+        return EngineResult.ok(f'track "{name}": channel → {channel}')
 
-    def remove_track(self, name: str) -> str:
-        return f'deleted track "{name}"'
+    def remove_track(self, name: str) -> EngineResult:
+        return EngineResult.ok(f'deleted track "{name}"')
 
-    def route_track(self, name: str, label: str) -> str:
-        return f'track "{name}" → port "{label}"'
+    def route_track(self, name: str, label: str) -> EngineResult:
+        return EngineResult.ok(f'track "{name}" → port "{label}"')
 
-    def unroute_track(self, name: str) -> str:
-        return f'track "{name}" disconnected'
+    def unroute_track(self, name: str) -> EngineResult:
+        return EngineResult.ok(f'track "{name}" disconnected')
 
-    def freeze(self, name: str | None = None) -> str:
-        return "all tracks frozen"
+    def freeze(self, name: str | None = None) -> EngineResult:
+        return EngineResult.ok("all tracks frozen")
 
-    def evolve(self) -> str:
-        return "all tracks evolved"
+    def evolve(self) -> EngineResult:
+        return EngineResult.ok("all tracks evolved")
 
-    def create_drum_track(self) -> str:
-        return "created track"
+    def create_drum_track(self) -> EngineResult:
+        return EngineResult.ok("created track", track="Pad 9")
 
-    def set_track_sources(self, name: str, *sources: str) -> str:
-        return "sources set"
+    def set_track_sources(self, name: str, *sources: str) -> EngineResult:
+        return EngineResult.ok("sources set")
 
-    def set_track_gate(self, name: str, gate: float) -> str:
-        return "gate set"
+    def set_track_gate(self, name: str, gate: float) -> EngineResult:
+        return EngineResult.ok("gate set")
 
-    def set_track_density(self, name: str, density: float) -> str:
-        return "density set"
+    def set_track_density(self, name: str, density: float) -> EngineResult:
+        return EngineResult.ok("density set")
 
-    def set_track_mutate(self, name: str, mutate: float) -> str:
-        return "mutate set"
+    def set_track_mutate(self, name: str, mutate: float) -> EngineResult:
+        return EngineResult.ok("mutate set")
 
-    def evolve_track(self, name: str) -> str:
-        return "evolved"
+    def evolve_track(self, name: str) -> EngineResult:
+        return EngineResult.ok("evolved")
 
 
 def run_repl(

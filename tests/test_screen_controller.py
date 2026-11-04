@@ -6,6 +6,8 @@ UI читает только StatusSnapshot (план D2 §2.2).
 
 from __future__ import annotations
 
+import re
+
 from src.app.ui.macro_axes import MacroAxes
 from src.app.ui.screen_controller import (
     LED_GREEN,
@@ -15,6 +17,7 @@ from src.app.ui.screen_controller import (
 )
 from src.app.ui.screen_id import ScreenId
 from src.app.ui.ui_event import UiEvent
+from src.core.engine_result import EngineResult
 from src.devices.push2.track_colors import track_color
 from src.repl.engine_control import EngineControl
 from src.repl.status import PortSummary, StatusSnapshot, TrackSummary
@@ -60,6 +63,15 @@ PORTS = (
 )
 
 
+def _as_result(text: str, method: str) -> EngineResult:
+    """Фикстура-строка → EngineResult: префикс ``error:`` делает ошибку."""
+    if text.startswith("error: "):
+        return EngineResult.fail(text[len("error: ") :])
+    if text.startswith("created track"):
+        return EngineResult.ok(text, track=re.search(r'"([^"]+)"', text).group(1))
+    return EngineResult.ok(text)
+
+
 class MockEngine(EngineControl):
     """Полный стаб EngineControl с записью вызовов."""
 
@@ -89,77 +101,77 @@ class MockEngine(EngineControl):
     def get_logs(self, n: int) -> list[str]:
         return []
 
-    def _rec(self, method: str, *args) -> str:
+    def _rec(self, method: str, *args) -> EngineResult:
         self.calls.append((method, args))
-        return self.feedback.get(method, f"{method} ok")
+        return _as_result(self.feedback.get(method, f"{method} ok"), method)
 
-    def start_transport(self) -> str:
+    def start_transport(self) -> EngineResult:
         return self._rec("start_transport")
 
-    def stop_transport(self) -> str:
+    def stop_transport(self) -> EngineResult:
         return self._rec("stop_transport")
 
-    def set_bpm(self, bpm: float) -> str:
+    def set_bpm(self, bpm: float) -> EngineResult:
         return self._rec("set_bpm", bpm)
 
-    def set_swing(self, amount: float) -> str:
+    def set_swing(self, amount: float) -> EngineResult:
         return self._rec("set_swing", amount)
 
-    def request_clock_source(self, source: str) -> str:
+    def request_clock_source(self, source: str) -> EngineResult:
         return self._rec("request_clock_source", source)
 
-    def rescan_ports(self) -> str:
+    def rescan_ports(self) -> EngineResult:
         return self._rec("rescan_ports")
 
-    def switch_port(self, label: str, match: str) -> str:
+    def switch_port(self, label: str, match: str) -> EngineResult:
         return self._rec("switch_port", label, match)
 
-    def set_root(self, root: str) -> str:
+    def set_root(self, root: str) -> EngineResult:
         return self._rec("set_root", root)
 
-    def set_scale(self, name: str) -> str:
+    def set_scale(self, name: str) -> EngineResult:
         return self._rec("set_scale", name)
 
     def list_tracks(self) -> list[TrackSummary]:
         return list(self.tracks)
 
-    def create_track(self, profile: str, channel: int | None = None) -> str:
+    def create_track(self, profile: str, channel: int | None = None) -> EngineResult:
         return self._rec("create_track", profile)
 
-    def set_track_channel(self, name: str, channel: int) -> str:
+    def set_track_channel(self, name: str, channel: int) -> EngineResult:
         return self._rec("set_track_channel", name, channel)
 
-    def remove_track(self, name: str) -> str:
+    def remove_track(self, name: str) -> EngineResult:
         return self._rec("remove_track", name)
 
-    def route_track(self, name: str, label: str) -> str:
+    def route_track(self, name: str, label: str) -> EngineResult:
         return self._rec("route_track", name, label)
 
-    def unroute_track(self, name: str) -> str:
+    def unroute_track(self, name: str) -> EngineResult:
         return self._rec("unroute_track", name)
 
-    def freeze(self, name: str | None = None) -> str:
+    def freeze(self, name: str | None = None) -> EngineResult:
         return self._rec("freeze", name)
 
-    def evolve(self) -> str:
+    def evolve(self) -> EngineResult:
         return self._rec("evolve")
 
-    def create_drum_track(self) -> str:
+    def create_drum_track(self) -> EngineResult:
         return self._rec("create_drum_track")
 
-    def set_track_sources(self, name: str, *sources: str) -> str:
+    def set_track_sources(self, name: str, *sources: str) -> EngineResult:
         return self._rec("set_track_sources", name, *sources)
 
-    def set_track_gate(self, name: str, gate: float) -> str:
+    def set_track_gate(self, name: str, gate: float) -> EngineResult:
         return self._rec("set_track_gate", name, gate)
 
-    def set_track_density(self, name: str, density: float) -> str:
+    def set_track_density(self, name: str, density: float) -> EngineResult:
         return self._rec("set_track_density", name, density)
 
-    def set_track_mutate(self, name: str, mutate: float) -> str:
+    def set_track_mutate(self, name: str, mutate: float) -> EngineResult:
         return self._rec("set_track_mutate", name, mutate)
 
-    def evolve_track(self, name: str) -> str:
+    def evolve_track(self, name: str) -> EngineResult:
         return self._rec("evolve_track", name)
 
     # helpers для тестов

@@ -12,13 +12,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import Enum
-from typing import TYPE_CHECKING
 
 from src.sync.cc_map import DEFAULT_CC_PARAMS
-
-if TYPE_CHECKING:
-    from src.config import UiConfig
 
 
 class MacroAxis(Enum):
@@ -75,11 +72,15 @@ class MacroAxes:
             self._cc_params[axis] = tuple(params)
 
     @classmethod
-    def from_ui_config(cls, ui: UiConfig | None) -> MacroAxes:
-        """Построить из ``UiConfig`` (None — дефолтный состав)."""
-        if ui is None:
+    def from_ui_config(cls, macro_axes: Mapping[str, list[str]] | None) -> MacroAxes:
+        """Построить из карты осей (``UiConfig.macro_axes``; None — дефолтный состав).
+
+        Принимает сам словарь, а не ``UiConfig``: модуль не импортирует конфиг,
+        поэтому цикл ``config`` ↔ ``macro_axes`` исчезает.
+        """
+        if macro_axes is None:
             return cls()
-        return cls({axis: list(params) for axis, params in ui.macro_axes.items()})
+        return cls({axis: list(params) for axis, params in macro_axes.items()})
 
     def cc_params(self, axis: MacroAxis) -> tuple[str, ...]:
         """Логические CC-параметры оси (TONE/SPACE/DEPTH)."""

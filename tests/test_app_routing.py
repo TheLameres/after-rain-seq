@@ -80,11 +80,11 @@ class TestRouteTrack:
     def test_route_changes_engine_and_track(self):
         app, melodic, _ = make_app()
         result = app.route_track("Pad 1", "aux")
-        assert result.startswith('track "Pad 1" → port "aux"')
+        assert result.message.startswith('track "Pad 1" → port "aux"')
         assert melodic.port == "aux"
         engine = app._melodic_engines[0]
         assert engine.port_label == "aux"
-        assert "was" in result  # в фидбеке видно прежний порт
+        assert "was" in result.message  # в фидбеке видно прежний порт
 
     def test_route_silences_old_port(self):
         app, _, _ = make_app()
@@ -102,21 +102,21 @@ class TestRouteTrack:
     def test_route_unknown_port_rejected(self):
         app, melodic, _ = make_app()
         result = app.route_track("Pad 1", "nope")
-        assert result.startswith("error:")
-        assert "unknown port label" in result
-        assert "main, aux" in result
+        assert result.error
+        assert "unknown port label" in result.message
+        assert "main, aux" in result.message
         assert melodic.port == "main"  # состояние не тронуто
 
     def test_route_unknown_track_rejected(self):
         app, _, _ = make_app()
         result = app.route_track("Ghost", "aux")
-        assert result.startswith("error:")
-        assert "not found" in result
+        assert result.error
+        assert "not found" in result.message
 
     def test_route_drum_track(self):
         app, _, drum = make_app()
         result = app.route_track("Drum 1", "aux")
-        assert result.startswith('track "Drum 1"')
+        assert result.message.startswith('track "Drum 1"')
         assert drum.port == "aux"
         assert app._drum_engines[0].port_label == "aux"
 
@@ -127,7 +127,7 @@ class TestUnrouteTrack:
     def test_unroute_makes_silent(self):
         app, melodic, _ = make_app()
         result = app.unroute_track("Pad 1")
-        assert result.startswith('track "Pad 1" disconnected')
+        assert result.message.startswith('track "Pad 1" disconnected')
         assert melodic.port is None
         assert app._melodic_engines[0].port_label is None
 
@@ -144,13 +144,13 @@ class TestUnrouteTrack:
         app.unroute_track("Pad 1")
         drain(app._event_queue)  # слить all_notes_off первого отключения
         result = app.unroute_track("Pad 1")
-        assert result.startswith('track "Pad 1" disconnected')
+        assert result.message.startswith('track "Pad 1" disconnected')
         assert app._event_queue.empty()  # второй раз глушить нечего
 
     def test_unroute_unknown_track(self):
         app, _, _ = make_app()
         result = app.unroute_track("Ghost")
-        assert result.startswith("error:")
+        assert result.error
 
 
 class TestRoutingEdgeCases:
@@ -167,7 +167,7 @@ class TestRoutingEdgeCases:
                 break
         result = app.route_track("Pad 1", "aux")
         # Команда отработала, all_notes_off потерян с предупреждением
-        assert result.startswith('track "Pad 1"')
+        assert result.message.startswith('track "Pad 1"')
 
     def test_track_without_engine_creates_one_on_demand(self):
         """Дорожка, созданная после старта: route создаёт движок on demand."""
@@ -175,7 +175,7 @@ class TestRoutingEdgeCases:
         bass = app._session.create_melodic_track(profile="bass", channel=1, port=None)
         assert len(app._melodic_engines) == 1  # только Pad 1
         result = app.route_track("Bass 1", "aux")
-        assert result.startswith('track "Bass 1" → port "aux"')
+        assert result.message.startswith('track "Bass 1" → port "aux"')
         assert bass.port == "aux"
         assert len(app._melodic_engines) == 2
         new_engine = app._melodic_engines[-1]
@@ -188,7 +188,7 @@ class TestRoutingEdgeCases:
         app, _, _ = make_app()
         drum2 = app._session.create_drum_track(channel=9, port=None)
         result = app.route_track("Drum 2", "aux")
-        assert result.startswith('track "Drum 2"')
+        assert result.message.startswith('track "Drum 2"')
         assert drum2.port == "aux"
         assert app._drum_engines[-1].port_label == "aux"
 
@@ -197,7 +197,7 @@ class TestRoutingEdgeCases:
         app, _, _ = make_app()
         bass = app._session.create_melodic_track(profile="bass", channel=1, port="main")
         result = app.unroute_track("Bass 1")
-        assert result.startswith('track "Bass 1" disconnected')
+        assert result.message.startswith('track "Bass 1" disconnected')
         assert bass.port is None
 
 
@@ -207,7 +207,7 @@ class TestDropTrack:
     def test_drop_removes_engine_and_silences_port(self):
         app, _, _ = make_app()
         result = app.drop_track("Pad 1")
-        assert result.startswith('deleted track "Pad 1"')
+        assert result.message.startswith('deleted track "Pad 1"')
         assert len(app._melodic_engines) == 0
         events = drain(app._event_queue)
         assert len(events) == 1
@@ -224,5 +224,5 @@ class TestDropTrack:
     def test_drop_unknown_track_errors(self):
         app, _, _ = make_app()
         result = app.drop_track("Ghost")
-        assert result.startswith("error:")
+        assert result.error
         assert len(app._melodic_engines) == 1  # ничего не удалено
