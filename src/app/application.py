@@ -418,20 +418,11 @@ class App:
         melodic_engines = self._melodic_engines
         mutation_engine = self._mutation_engine
         session = self._session
-        # BPM движкам: раз в целый бит (мутация считает интервал в секундах).
-        last_bpm_beat = [-1]
 
         def hooked_dispatch(event):
             if event.name == "TICK":
                 cm.on_tick()
-                now = timeline.current_time
-                if int(now) != last_bpm_beat[0]:
-                    last_bpm_beat[0] = int(now)
-                    bpm_now = cm.state.bpm or self._sync_bpm
-                    for engine in drum_engines:
-                        engine.set_bpm(bpm_now)
-                    if mutation_engine:
-                        mutation_engine.set_bpm_all(bpm_now)
+                bpm_now = cm.state.bpm or self._sync_bpm
                 # Мутация до генерации — generate() использует новые параметры.
                 # §4.1: подтянуть mutate из треков (freeze / set_track_mutate
                 # меняют track.mutate, а не копию в MutationEngine).
@@ -440,13 +431,13 @@ class App:
                         for track in session.ordered_tracks():
                             if isinstance(track, MelodicTrack):
                                 mutation_engine.sync_mutate(track.name, track.mutate)
-                    mutation_engine.tick(timeline.current_time)
+                    mutation_engine.tick(timeline.current_time, bpm_now)
                 # C6 шаг 3: фаза графа — источники публикуют ChordEvent,
                 # наследники получают их в outbox (движки читают как окно)
                 if session:
                     session.propagate_chords()
                 for engine in drum_engines:
-                    engine.tick(timeline.current_time)
+                    engine.tick(timeline.current_time, bpm_now)
                 for engine in melodic_engines:
                     engine.tick(timeline.current_time)
             elif event.name == "STOP":
@@ -473,7 +464,6 @@ class App:
             return
         for track in self._session.ordered_tracks():
             if isinstance(track, DrumTrack):
-                track.bpm = self._sync_bpm
                 engine = DrumEngine(
                     drum_track=track,
                     event_queue=self._event_queue,
@@ -632,7 +622,6 @@ class App:
         if self._event_queue is None or self._swing_applier is None:
             return None
         if isinstance(track, DrumTrack):
-            track.bpm = self._sync_bpm
             drum_engine = DrumEngine(
                 drum_track=track,
                 event_queue=self._event_queue,

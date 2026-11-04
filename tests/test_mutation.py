@@ -389,7 +389,7 @@ class TestMutationEngine:
         rng = random.Random(42)
         engine = MutationEngine(rng=rng)
         engine.register_track("Lead 1", "lead", mutate=0.0, degrees=[0, 2, 4])
-        result = engine.tick(100.0)  # далеко за интервалом
+        result = engine.tick(100.0, bpm=120.0)  # далеко за интервалом
         assert result == []
 
     def test_tick_before_interval_no_op(self) -> None:
@@ -400,7 +400,7 @@ class TestMutationEngine:
         state = engine.get_state("Lead 1")
         assert state is not None
         # Тик до next_mutation_beat
-        result = engine.tick(state.next_mutation_beat - 0.001)
+        result = engine.tick(state.next_mutation_beat - 0.001, bpm=120.0)
         assert result == []
 
     def test_tick_after_interval_mutates(self) -> None:
@@ -410,7 +410,7 @@ class TestMutationEngine:
         engine.register_track("Lead 1", "lead", mutate=1.0, degrees=[0, 2, 4])
         state = engine.get_state("Lead 1")
         assert state is not None
-        result = engine.tick(state.next_mutation_beat)
+        result = engine.tick(state.next_mutation_beat, bpm=120.0)
         assert result == ["Lead 1"]
         new_state = engine.get_state("Lead 1")
         assert new_state is not None
@@ -425,7 +425,7 @@ class TestMutationEngine:
         state = engine.get_state("Lead 1")
         assert state is not None
         assert state.mutate == 0.0
-        result = engine.tick(1000.0)
+        result = engine.tick(1000.0, bpm=120.0)
         assert result == []
 
     def test_evolve_all_resumes_mutation(self) -> None:
@@ -438,7 +438,7 @@ class TestMutationEngine:
         state = engine.get_state("Lead 1")
         assert state is not None
         assert state.mutate == 0.5  # default_mutate
-        result = engine.tick(state.next_mutation_beat)
+        result = engine.tick(state.next_mutation_beat, bpm=120.0)
         assert result == ["Lead 1"]
 
     def test_total_mutation_count(self) -> None:
@@ -452,7 +452,9 @@ class TestMutationEngine:
         state1 = engine.get_state("Lead 1")
         state2 = engine.get_state("Pad 1")
         assert state1 is not None and state2 is not None
-        engine.tick(max(state1.next_mutation_beat, state2.next_mutation_beat))
+        engine.tick(
+            max(state1.next_mutation_beat, state2.next_mutation_beat), bpm=120.0
+        )
         assert engine.total_mutation_count == 2
 
     def test_get_state_returns_mutation_state(self) -> None:
@@ -478,24 +480,6 @@ class TestMutationEngine:
         assert state is not None
         assert state.mutate == 0.0
 
-    def test_set_bpm(self) -> None:
-        """set_bpm обновляет BPM для дорожки."""
-        engine = MutationEngine()
-        engine.register_track("Lead 1", "lead", bpm=120.0, degrees=[0, 2, 4])
-        engine.set_bpm("Lead 1", 140.0)
-        # BPM используется для пересчёта интервала — проверяем косвенно
-        # через то, что не падает
-        engine.tick(100.0)
-
-    def test_set_bpm_all(self) -> None:
-        """set_bpm_all обновляет BPM для всех дорожек."""
-        engine = MutationEngine()
-        engine.register_track("Lead 1", "lead", degrees=[0, 2, 4])
-        engine.register_track("Pad 1", "pad")
-        engine.set_bpm_all(90.0)
-        # Не падает
-        engine.tick(100.0)
-
     def test_unregister_track(self) -> None:
         """unregister_track удаляет дорожку из мутации."""
         rng = random.Random(42)
@@ -504,7 +488,7 @@ class TestMutationEngine:
         engine.unregister_track("Lead 1")
         assert engine.get_state("Lead 1") is None
         assert engine.get_note_drift("Lead 1") is None
-        result = engine.tick(1000.0)
+        result = engine.tick(1000.0, bpm=120.0)
         assert result == []
 
     def test_interval_depends_on_bpm(self) -> None:
@@ -533,11 +517,11 @@ class TestMutationEngine:
         state = engine.get_state("Lead 1")
         assert state is not None
         # Первая мутация
-        engine.tick(state.next_mutation_beat)
+        engine.tick(state.next_mutation_beat, bpm=120.0)
         # Вторая мутация — может быть revert
         state = engine.get_state("Lead 1")
         assert state is not None
-        engine.tick(state.next_mutation_beat)
+        engine.tick(state.next_mutation_beat, bpm=120.0)
         # Проверяем, что счётчик изменился (либо +1, либо revert)
         # Главное — не падает и состояние консистентно
         new_state = engine.get_state("Lead 1")
@@ -554,7 +538,7 @@ class TestMutationEngine:
         state2 = engine.get_state("Pad 1")
         assert state1 is not None and state2 is not None
         max_beat = max(state1.next_mutation_beat, state2.next_mutation_beat)
-        result = engine.tick(max_beat)
+        result = engine.tick(max_beat, bpm=120.0)
         assert "Lead 1" in result
         assert "Pad 1" in result
 
@@ -671,7 +655,7 @@ class TestSyncMutate:
         engine.register_track("Pad 1", "pad", mutate=0.5, bpm=118.0, degrees=[0, 2, 4])
         engine.sync_mutate("Pad 1", 0.0)  # simulate track.freeze()
         for beat in range(20_000):
-            engine.tick(beat * 0.05)
+            engine.tick(beat * 0.05, bpm=120.0)
         state = engine.get_state("Pad 1")
         assert state is not None
         assert state.mutation_count == 0
@@ -690,7 +674,7 @@ class TestMutationCountOnTrack:
             "Lead 1", "lead", mutate=0.3, bpm=120.0, degrees=[0, 2, 4], track=track
         )
         for beat in range(600):
-            engine.tick(beat * 0.5)
+            engine.tick(beat * 0.5, bpm=120.0)
         state = engine.get_state("Lead 1")
         assert state is not None
         # Тиков-мутаций больше, чем чистых изменений: деградация вычитает.
@@ -707,44 +691,24 @@ class TestMutationCountOnTrack:
         track.freeze()
         engine.sync_mutate("Pad 1", track.mutate)
         for beat in range(700):
-            engine.tick(beat * 0.5)
+            engine.tick(beat * 0.5, bpm=120.0)
         assert track.mutation_count == 0
 
 
-class TestSyncMutate:
-    """Regression §4.1: track.mutate must reach MutationEngine state."""
+class TestTempoPassedToTick:
+    """BPM приходит в tick снаружи и определяет интервал до следующей мутации."""
 
-    def test_sync_updates_state(self) -> None:
-        engine = MutationEngine(rng=random.Random(0))
-        engine.register_track("Lead 1", "lead", mutate=0.5, degrees=[0, 2, 4])
-        engine.sync_mutate("Lead 1", 0.0)
-        state = engine.get_state("Lead 1")
-        assert state is not None
-        assert state.mutate == 0.0
+    def test_next_interval_uses_tick_bpm(self) -> None:
+        from src.session.model.melodic_track import MelodicTrack
 
-    def test_sync_keeps_counters(self) -> None:
-        engine = MutationEngine(rng=random.Random(0))
-        engine.register_track("Lead 1", "lead", mutate=0.5, degrees=[0, 2, 4])
-        before = engine.get_state("Lead 1")
-        assert before is not None
-        engine.sync_mutate("Lead 1", 0.2)
-        after = engine.get_state("Lead 1")
-        assert after is not None
-        assert after.mutation_count == before.mutation_count
-        assert after.next_mutation_beat == before.next_mutation_beat
-
-    def test_sync_unknown_track_is_noop(self) -> None:
-        engine = MutationEngine(rng=random.Random(0))
-        engine.sync_mutate("Ghost", 0.0)
-        assert engine.get_state("Ghost") is None
-
-    def test_frozen_track_gets_no_mutations_after_sync(self) -> None:
-        """Plan §2.2 acceptance: freeze → 0 mutations over many ticks."""
-        engine = MutationEngine(rng=random.Random(1))
-        engine.register_track("Pad 1", "pad", mutate=0.5, bpm=118.0, degrees=[0, 2, 4])
-        engine.sync_mutate("Pad 1", 0.0)  # simulate track.freeze()
-        for beat in range(20_000):
-            engine.tick(beat * 0.05)
-        state = engine.get_state("Pad 1")
-        assert state is not None
-        assert state.mutation_count == 0
+        track = MelodicTrack(name="Lead 1", profile_name="lead")
+        engine = MutationEngine(rng=random.Random(5))
+        engine.register_track(
+            "Lead 1", "lead", mutate=1.0, bpm=120.0, degrees=[0, 2, 4], track=track
+        )
+        due = engine.get_state("Lead 1").next_mutation_beat
+        mutated = engine.tick(due, bpm=240.0)
+        assert "Lead 1" in mutated
+        gap = engine.get_state("Lead 1").next_mutation_beat - due
+        # 8–16 с при 240 BPM = 32–64 beats; при 120 BPM было бы 16–32
+        assert 32.0 <= gap <= 64.0 + 1e-9

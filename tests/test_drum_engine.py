@@ -38,7 +38,7 @@ def _drain(q: queue.Queue[TransportEvent]) -> list[TransportEvent]:
 def test_tick_empty_pattern():
     """Пустой паттерн → нет событий в очереди."""
     engine, q, _ = _make_engine()
-    count = engine.tick(current_beat=0.0)
+    count = engine.tick(current_beat=0.0, bpm=120.0)
     assert count == 0
     assert q.empty()
 
@@ -48,7 +48,7 @@ def test_tick_with_pattern():
     engine, q, dt = _make_engine()
     dt.lanes[0].pattern[0] = 1  # kick
     dt.lanes[2].pattern[4] = 1  # snare
-    count = engine.tick(current_beat=0.0)
+    count = engine.tick(current_beat=0.0, bpm=120.0)
     assert count == 2
     events = _drain(q)
     assert len(events) == 2
@@ -60,7 +60,7 @@ def test_tick_event_fields():
     """События содержат правильные note/velocity/channel."""
     engine, q, dt = _make_engine()
     dt.lanes[0].pattern[0] = 2  # accent
-    engine.tick(current_beat=0.0)
+    engine.tick(current_beat=0.0, bpm=120.0)
     events = _drain(q)
     assert len(events) == 1
     ev = events[0]
@@ -74,7 +74,7 @@ def test_tick_respects_channel():
     engine, q, dt = _make_engine()
     dt.channel = 5
     dt.lanes[0].pattern[0] = 1
-    engine.tick(current_beat=0.0)
+    engine.tick(current_beat=0.0, bpm=120.0)
     events = _drain(q)
     assert events[0].channel == 5
 
@@ -89,7 +89,7 @@ def test_engine_does_not_swing_durations():
     engine, q, dt = _make_engine()
     dt.lanes[0].pattern[0] = 1
     dt.lanes[0].pattern[1] = 1
-    engine.tick(current_beat=0.0)
+    engine.tick(current_beat=0.0, bpm=120.0)
     events = _drain(q)
     assert len(events) == 2
     # Чётный и нечётный шаги одинаковы: движок ничего не сдвигает.
@@ -100,7 +100,7 @@ def test_default_gate_duration():
     """Длительность удара — DEFAULT_GATE, без преобразований."""
     engine, q, dt = _make_engine()
     dt.lanes[0].pattern[0] = 1
-    engine.tick(current_beat=0.0)
+    engine.tick(current_beat=0.0, bpm=120.0)
     events = _drain(q)
     assert events[0].duration == 0.25  # DEFAULT_GATE
 
@@ -117,7 +117,7 @@ def test_queue_full_drop_oldest():
     dt.lanes[1].pattern[0] = 1
     dt.lanes[2].pattern[0] = 1
     # 3 события, очередь на 2 — должно пройти без блокировки
-    count = engine.tick(current_beat=0.0)
+    count = engine.tick(current_beat=0.0, bpm=120.0)
     assert count == 3
     assert q.qsize() == 2  # одно вытеснено
 
@@ -146,21 +146,25 @@ def test_tick_triggers_mutation():
     engine, _q, dt = _make_engine()
     dt.mutate = 1.0
     # current_beat достаточно большой — мутация должна примениться
-    engine.tick(current_beat=1000.0)
+    engine.tick(current_beat=0.0, bpm=120.0)
+    engine.tick(current_beat=1000.0, bpm=120.0)
+    assert dt.mutation_count > 0
+
+
+def test_tick_bpm_sets_mutation_interval():
+    """Темп приходит в tick: при 60 BPM мутация наступает через 8–16 beats."""
+    engine, _q, dt = _make_engine()
+    dt.mutate = 1.0
+    engine.tick(current_beat=0.0, bpm=60.0)
+    engine.tick(current_beat=7.9, bpm=60.0)
+    assert dt.mutation_count == 0
+    engine.tick(current_beat=16.1, bpm=60.0)
     assert dt.mutation_count > 0
 
 
 # ---------------------------------------------------------------------------
 # BPM (C6, R4)
 # ---------------------------------------------------------------------------
-
-
-def test_set_bpm_updates_track_bpm():
-    """set_bpm пробрасывается в DrumTrack.bpm при следующем tick."""
-    engine, _, dt = _make_engine()
-    engine.set_bpm(87.5)
-    engine.tick(current_beat=0.0)
-    assert dt.bpm == 87.5
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +176,7 @@ def test_values_are_int():
     """Все значения в TransportEvent — plain int (не numpy)."""
     engine, q, dt = _make_engine()
     dt.lanes[0].pattern[0] = 1
-    engine.tick(current_beat=0.0)
+    engine.tick(current_beat=0.0, bpm=120.0)
     events = _drain(q)
     ev = events[0]
     assert type(ev.note) is int
@@ -198,7 +202,7 @@ def test_tick_silent_when_no_port():
     engine, q, dt = _make_engine()
     dt.lanes[0].pattern[0] = 1  # kick
     engine.set_port_label(None)
-    count = engine.tick(current_beat=0.0)
+    count = engine.tick(current_beat=0.0, bpm=120.0)
     assert count == 0
     assert q.empty()
 
@@ -225,11 +229,11 @@ def test_muted_track_sends_nothing():
     engine, q, dt = _make_engine()
     dt.lanes[0].pattern[0] = 1
     dt.muted = True
-    assert engine.tick(current_beat=0.0) == 0
+    assert engine.tick(current_beat=0.0, bpm=120.0) == 0
     assert _drain(q) == []
     # генерация всё равно произошла — outbox наполнен (§4.5)
     assert len(dt.outbox) == 1
 
     dt.muted = False
-    assert engine.tick(current_beat=1.0) == 1
+    assert engine.tick(current_beat=1.0, bpm=120.0) == 1
     assert len(_drain(q)) == 1

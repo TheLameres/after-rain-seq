@@ -35,7 +35,6 @@ class DrumEngine:
         self._track = drum_track
         self._queue = event_queue
         self._port_label = port_label
-        self._bpm = 120.0
 
     # ------------------------------------------------------------------
     # Публичный API
@@ -51,14 +50,6 @@ class DrumEngine:
         """Метка MIDI-порта событий; None — дорожка молчит."""
         return self._port_label
 
-    def set_bpm(self, bpm: float) -> None:
-        """Установить BPM для пересчёта интервала мутации дорожки.
-
-        Аргументы:
-            bpm: Текущий темп (beats per minute).
-        """
-        self._bpm = float(bpm)
-
     def set_port_label(self, label: str | None) -> str | None:
         """Сменить порт событий дорожки (рантайм, thread-safe по GIL).
 
@@ -72,7 +63,7 @@ class DrumEngine:
         self._port_label = label
         return old
 
-    def tick(self, current_beat: float) -> int:
+    def tick(self, current_beat: float, bpm: float) -> int:
         """Один тик drum-движка.
 
         1. Проверить мутацию (maybe_mutate).
@@ -81,6 +72,8 @@ class DrumEngine:
 
         Аргументы:
             current_beat: Текущая позиция в тактах.
+            bpm: Текущий темп. Передаётся снаружи (от часов) и не хранится:
+                дорожка пересчитывает по нему интервал мутации.
 
         Returns:
             Количество событий, положенных в очередь.
@@ -88,11 +81,8 @@ class DrumEngine:
         if self._port_label is None:
             return 0
         port = self._port_label
-        # Обновляем BPM у дорожки (для пересчёта интервала мутации).
-        self._track.bpm = self._bpm
-
         # Мутация по времени.
-        self._track.maybe_mutate(current_beat)
+        self._track.maybe_mutate(current_beat, bpm)
 
         # Генерация.
         events = self._track.generate()

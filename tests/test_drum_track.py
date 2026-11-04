@@ -4,8 +4,6 @@ import pytest
 
 from src.session.events.drum_event import DrumEvent
 from src.session.model.drum_track import (
-    MUTATE_MAX_SECONDS,
-    MUTATE_MIN_SECONDS,
     VELOCITY_ACCENT,
     VELOCITY_NORMAL,
     DrumTrack,
@@ -171,7 +169,7 @@ def test_mutate_zero_no_change():
     dt.lanes[0].pattern[0] = 1
     pattern_before = list(dt.lanes[0].pattern)
     # Прошло достаточно времени
-    dt.maybe_mutate(current_beat=1000.0)
+    dt.maybe_mutate(current_beat=1000.0, bpm=120.0)
     assert dt.lanes[0].pattern == pattern_before
 
 
@@ -179,11 +177,12 @@ def test_mutate_applies():
     """mutate>0 → паттерн меняется после интервала."""
     dt = DrumTrack(name="Drum 1")
     dt.mutate = 1.0
+    dt.maybe_mutate(0.0, bpm=120.0)
     # Запоминаем все паттерны
     all_before = [list(lane.pattern) for lane in dt.lanes]
 
     # Должно быть применено
-    result = dt.maybe_mutate(current_beat=1000.0)
+    result = dt.maybe_mutate(current_beat=1000.0, bpm=120.0)
     assert result is True
     # Хотя бы один lane изменился
     all_after = [list(lane.pattern) for lane in dt.lanes]
@@ -194,8 +193,9 @@ def test_mutate_not_before_interval():
     """Мутация не применяется раньше интервала."""
     dt = DrumTrack(name="Drum 1")
     dt.mutate = 1.0
+    dt.maybe_mutate(0.0, bpm=120.0)
     # current_beat=0, next_mutation_beat > 0
-    result = dt.maybe_mutate(current_beat=0.0)
+    result = dt.maybe_mutate(current_beat=0.0, bpm=120.0)
     assert result is False
 
 
@@ -203,8 +203,9 @@ def test_mutation_count():
     """Счётчик мутаций растёт."""
     dt = DrumTrack(name="Drum 1")
     dt.mutate = 1.0
+    dt.maybe_mutate(0.0, bpm=120.0)
     assert dt.mutation_count == 0
-    dt.maybe_mutate(current_beat=1000.0)
+    dt.maybe_mutate(current_beat=1000.0, bpm=120.0)
     assert dt.mutation_count > 0
 
 
@@ -212,8 +213,9 @@ def test_freeze_resets():
     """freeze() сбрасывает счётчик и запоминает паттерн."""
     dt = DrumTrack(name="Drum 1")
     dt.mutate = 1.0
+    dt.maybe_mutate(0.0, bpm=120.0)
     dt.lanes[0].pattern[0] = 1
-    dt.maybe_mutate(current_beat=1000.0)
+    dt.maybe_mutate(current_beat=1000.0, bpm=120.0)
     assert dt.mutation_count > 0
     dt.freeze()
     assert dt.mutation_count == 0
@@ -222,21 +224,14 @@ def test_freeze_resets():
 
 
 def test_mutation_interval_in_seconds():
-    """Интервал мутации пересчитывается от BPM."""
+    """Интервал мутации — в секундах: 8–16 с при темпе, переданном в maybe_mutate."""
     dt = DrumTrack(name="Drum 1")
-    dt.bpm = 120.0
     dt.mutate = 1.0
-    # При 120 BPM: 8 сек = 16 тактов, 16 сек = 32 такта
-    dt.maybe_mutate(current_beat=1000.0)
-    # next_mutation_beat должен быть в разумном диапазоне
-    expected_min = 1000.0 + MUTATE_MIN_SECONDS * 120.0 / 60.0
-    expected_max = 1000.0 + MUTATE_MAX_SECONDS * 120.0 / 60.0
-    assert expected_min <= dt._next_mutation_beat <= expected_max
-
-
-# ---------------------------------------------------------------------------
-# Sources заблокированы
-# ---------------------------------------------------------------------------
+    dt.maybe_mutate(0.0, bpm=60.0)
+    dt.maybe_mutate(7.9, bpm=60.0)
+    assert dt.mutation_count == 0
+    dt.maybe_mutate(16.1, bpm=60.0)
+    assert dt.mutation_count > 0
 
 
 def test_sources_blocked():
@@ -286,11 +281,12 @@ def test_freeze_sets_mutate_zero():
     """Regression §4.3: DrumTrack.freeze() must stop mutation, not only reset counter."""
     dt = DrumTrack(name="Drum 1")
     dt.mutate = 1.0
+    dt.maybe_mutate(0.0, bpm=120.0)
     dt.freeze()
     assert dt.mutate == 0.0
     dt.lanes[0].pattern[0] = 1
     for beat in range(1000, 21000):
-        dt.maybe_mutate(current_beat=float(beat))
+        dt.maybe_mutate(current_beat=float(beat), bpm=120.0)
     assert dt.mutation_count == 0
 
 
@@ -305,15 +301,3 @@ def test_generate_publishes_to_outbox():
     assert dt.current() is not None
     assert dt.current().beat == 2.0
     assert len(dt.history(1.0)) == 1
-
-
-def test_freeze_sets_mutate_zero():
-    """Regression §4.3: DrumTrack.freeze() must stop mutation, not only reset counter."""
-    dt = DrumTrack(name="Drum 1")
-    dt.mutate = 1.0
-    dt.freeze()
-    assert dt.mutate == 0.0
-    dt.lanes[0].pattern[0] = 1
-    for beat in range(1000, 21000):
-        dt.maybe_mutate(current_beat=float(beat))
-    assert dt.mutation_count == 0

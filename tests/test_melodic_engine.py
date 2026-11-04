@@ -467,7 +467,7 @@ class TestMutationIntegration:
         """Форсировать мутацию дорожки на её следующем mutation beat."""
         state = me.get_state(name)
         assert state is not None
-        me.tick(state.next_mutation_beat)
+        me.tick(state.next_mutation_beat, bpm=120.0)
 
     def test_lead_note_drift_changes_pattern(
         self,
@@ -557,7 +557,7 @@ class TestMutationIntegration:
         before = [n.degree for n in engine._pattern()[0]]
         state = me.get_state("Lead 1")
         assert state is not None
-        me.tick(state.next_mutation_beat)  # mutate=0 — мутации нет
+        me.tick(state.next_mutation_beat, bpm=120.0)  # mutate=0 — мутации нет
         after = [n.degree for n in engine._pattern()[0]]
         assert after == before
 

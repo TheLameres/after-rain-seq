@@ -621,12 +621,6 @@ def test_melodic_track_mutate_default():
     assert t.mutate == 0.5
 
 
-def test_melodic_track_bpm_default():
-    """MelodicTrack имеет bpm=120.0 по умолчанию."""
-    t = MelodicTrack(name="Pad 1", profile_name="pad")
-    assert t.bpm == 120.0
-
-
 def test_melodic_track_mutation_count_default():
     """mutation_count = 0 без MutationEngine."""
     t = MelodicTrack(name="Pad 1", profile_name="pad")
@@ -722,7 +716,8 @@ def test_drum_track_mutation_count_shared_counter():
     """DrumTrack пишет в общий счётчик базового класса."""
     dt = DrumTrack(name="Drum 1")
     dt.mutate = 1.0
-    dt.maybe_mutate(current_beat=1000.0)
+    dt.maybe_mutate(0.0, bpm=120.0)
+    dt.maybe_mutate(current_beat=1000.0, bpm=120.0)
     assert dt.mutation_count > 0
     dt.freeze()
     assert dt.mutation_count == 0

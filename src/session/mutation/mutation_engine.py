@@ -64,7 +64,6 @@ class MutationEngine:
         self._states: dict[str, MutationState] = {}
         self._track_profiles: dict[str, str] = {}
         self._track_mutate: dict[str, float] = {}
-        self._track_bpm: dict[str, float] = {}
         # §4.4: дорожки-владельцы счётчика (пишем в них, читаем из них).
         self._track_refs: dict[str, object] = {}
 
@@ -110,7 +109,6 @@ class MutationEngine:
             self._track_refs[track_name] = track
         self._track_profiles[track_name] = profile_name
         self._track_mutate[track_name] = effective_mutate
-        self._track_bpm[track_name] = bpm
 
         # Создаём механизм по профилю (таблица PROFILE_MECHANISM, C6)
         mechanism = PROFILE_MECHANISM.get(profile_name)
@@ -157,17 +155,19 @@ class MutationEngine:
         self._states.pop(track_name, None)
         self._track_profiles.pop(track_name, None)
         self._track_mutate.pop(track_name, None)
-        self._track_bpm.pop(track_name, None)
 
     # ------------------------------------------------------------------
     # Тик
     # ------------------------------------------------------------------
 
-    def tick(self, current_beat: float) -> list[str]:
+    def tick(self, current_beat: float, bpm: float) -> list[str]:
         """Один тик мутации.
 
         Аргументы:
             current_beat: Текущая позиция в тактах.
+            bpm: Текущий темп. Передаётся снаружи (от часов) и не хранится:
+                интервал мутации считается в секундах, поэтому темп нужен
+                в момент тика.
 
         Returns:
             Имена дорожек, которые мутировали на этом тике.
@@ -193,7 +193,6 @@ class MutationEngine:
                 if callable(recorder):
                     recorder(delta)
 
-            bpm = self._track_bpm.get(name, 120.0)
             new_state = MutationState(
                 mutate=state.mutate,
                 mutation_count=state.mutation_count + 1,
@@ -318,16 +317,6 @@ class MutationEngine:
             next_mutation_beat=state.next_mutation_beat,
             last_mutation_beat=state.last_mutation_beat,
         )
-
-    def set_bpm(self, track_name: str, bpm: float) -> None:
-        """Обновить BPM для конкретной дорожки."""
-        if track_name in self._track_bpm:
-            self._track_bpm[track_name] = bpm
-
-    def set_bpm_all(self, bpm: float) -> None:
-        """Обновить BPM для всех дорожек."""
-        for name in self._track_bpm:
-            self._track_bpm[name] = bpm
 
     @property
     def total_mutation_count(self) -> int:

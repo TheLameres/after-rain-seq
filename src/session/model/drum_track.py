@@ -60,7 +60,6 @@ class DrumTrack(Track):
         accent_level: Velocity акцента (по умолчанию 127).
         mutate: Вероятность мутации 0.0–1.0 (0 = заморожено).
         square: Активный квадрат сетки (4 столбца пада).
-        bpm: Текущий темп (для пересчёта интервала мутации).
 
     ``sources`` всегда пустой tuple, попытка назначить — ValueError.
     """
@@ -84,7 +83,6 @@ class DrumTrack(Track):
         self.accent_level: int = 127
         self.mutate: float = 0.5
         self.square: int = 1
-        self.bpm: float = 120.0
 
         # Мутация: состояние.
         self._rng = random.Random()
@@ -92,7 +90,7 @@ class DrumTrack(Track):
             list(lane.pattern) for lane in self.lanes
         ]
         self._last_mutation_beat: float = 0.0
-        self._next_mutation_beat: float = self._compute_next_mutation_beat(0.0)
+        self._next_mutation_beat: float | None = None
 
     # ------------------------------------------------------------------
     # Блокировка sources
@@ -183,7 +181,7 @@ class DrumTrack(Track):
     # Мутация
     # ------------------------------------------------------------------
 
-    def _compute_next_mutation_beat(self, from_beat: float) -> float:
+    def _compute_next_mutation_beat(self, from_beat: float, bpm: float) -> float:
         """Вычислить beat следующей мутации.
 
         Интервал от времени (секунды), не от тактов — при смене BPM
@@ -196,10 +194,10 @@ class DrumTrack(Track):
             Beat следующей мутации.
         """
         seconds = self._rng.uniform(MUTATE_MIN_SECONDS, MUTATE_MAX_SECONDS)
-        beats = seconds * self.bpm / 60.0
+        beats = seconds * bpm / 60.0
         return from_beat + beats
 
-    def maybe_mutate(self, current_beat: float) -> bool:
+    def maybe_mutate(self, current_beat: float, bpm: float) -> bool:
         """Применить мутацию, если пришло время.
 
         Правила из плана 4.2:
@@ -215,6 +213,11 @@ class DrumTrack(Track):
         """
         if self.mutate <= 0.0:
             return False
+        if self._next_mutation_beat is None:
+            self._next_mutation_beat = self._compute_next_mutation_beat(
+                current_beat, bpm
+            )
+            return False
         if current_beat < self._next_mutation_beat:
             return False
 
@@ -225,7 +228,7 @@ class DrumTrack(Track):
             self._apply_mutation()
 
         self._last_mutation_beat = current_beat
-        self._next_mutation_beat = self._compute_next_mutation_beat(current_beat)
+        self._next_mutation_beat = self._compute_next_mutation_beat(current_beat, bpm)
         return True
 
     def _apply_mutation(self) -> None:
