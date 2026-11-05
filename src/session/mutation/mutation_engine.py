@@ -13,7 +13,9 @@
 from __future__ import annotations
 
 import logging
+import math
 import random
+from collections import deque
 from collections.abc import Sequence
 
 from src.session.mutation.drift_tables import (
@@ -31,6 +33,10 @@ from src.session.mutation.note_drift import NoteDrift
 from src.session.mutation.param_drift import ParamDrift
 
 log = logging.getLogger(__name__)
+
+
+def _cycle_index(beat: float, cycle_beats: float) -> int:
+    return math.floor(beat / cycle_beats + 1e-9)
 
 
 class MutationEngine:
@@ -71,6 +77,9 @@ class MutationEngine:
         # регистрации (для пересоздания механизма при смене профиля).
         self._track_revision: dict[str, int] = {}
         self._reg_params: dict[str, dict[str, float | int]] = {}
+        self._requests: deque[tuple[str, float]] = deque()
+        self._pending: dict[str, float] = {}
+        self._prev_beat: float | None = None
 
     # ------------------------------------------------------------------
     # Регистрация
@@ -285,6 +294,7 @@ class MutationEngine:
         mutated: list[str] = []
         # B1: правки degrees/профиля доходят до механизмов даже у замороженных.
         self._sync_revisions(bpm)
+        self._apply_requested(current_beat)
         for name, state in self._states.items():
             if state.mutate <= 0.0:
                 continue
@@ -389,6 +399,39 @@ class MutationEngine:
     # ------------------------------------------------------------------
     # Доступ
     # ------------------------------------------------------------------
+
+    def request_mutation(self, track_name: str, cycle_beats: float) -> None:
+        self._requests.append((track_name, cycle_beats))
+
+    def _apply_requested(self, current_beat: float) -> None:
+        prev = self._prev_beat
+        self._prev_beat = current_beat
+        while self._requests:
+            name, cycle_beats = self._requests.popleft()
+            if name in self._states:
+                self._pending[name] = cycle_beats
+        for name, cycle_beats in list(self._pending.items()):
+            if name not in self._states:
+                del self._pending[name]
+                continue
+            if prev is None or _cycle_index(current_beat, cycle_beats) <= _cycle_index(prev, cycle_beats):
+                continue
+            del self._pending[name]
+            self._commit_manual(name, current_beat)
+
+    def _commit_manual(self, track_name: str, beat: float) -> None:
+        changed = self._apply_mutation(track_name)
+        track = self._track_refs.get(track_name)
+        recorder = getattr(track, "record_mutation", None)
+        if changed and callable(recorder):
+            recorder(1)
+        state = self._states[track_name]
+        self._states[track_name] = MutationState(
+            mutate=state.mutate,
+            mutation_count=state.mutation_count + 1,
+            next_mutation_beat=state.next_mutation_beat,
+            last_mutation_beat=beat,
+        )
 
     def get_state(self, track_name: str) -> MutationState | None:
         """Состояние мутации конкретной дорожки."""
