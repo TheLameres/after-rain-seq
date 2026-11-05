@@ -40,6 +40,7 @@ from src.session.session import Session
 from src.sync import ClockManager, ClockManagerConfig, ClockSource, TickProxy
 from src.sync.capture_output import CaptureOutput
 from src.sync.cc_map import CCMap
+from src.sync.midi_clock_out import MidiClockOutput, make_clock_sender
 from src.sync.ports import PortManager
 from src.sync.routing import PortRegistry
 from src.sync.swing import SwingApplier, SwingConfig
@@ -91,6 +92,8 @@ class App:
         self._port_registry: PortRegistry | None = None
         self._capture: CaptureOutput | None = None
         self._transport: Transport | None = None
+        self._midi_clock: MidiClockOutput | None = None
+        self._clock_labels: frozenset[str] = frozenset()
         self._session: Session | None = None
         self._drum_engines: list[DrumEngine] = []
         self._melodic_engines: list[MelodicEngine] = []
@@ -169,6 +172,7 @@ class App:
         # 7. Create clock manager + tick proxy (creates event_queue + swing)
         if loaded.sync_config.enabled:
             self._init_clock_manager(loaded.sync_config)
+            self._init_midi_clock_out()
 
         # 8. Create drum engines (needs event_queue + swing from clock manager)
         self._init_drum_engines(loaded.drum_config)
@@ -326,6 +330,10 @@ class App:
         """Create PortManager and PortRegistry from ports config."""
         registry = create_registry()
         self._port_manager = PortManager(ports_config, registry)
+        # Порты с clock: true получают MIDI Clock и Start/Continue/Stop.
+        self._clock_labels = frozenset(
+            pc.label for pc in ports_config.outputs if pc.clock
+        )
         # start() возвращает события начального скана — иначе порт,
         # подключённый до старта, не откроется в PortRegistry (hot-plug
         # эмитит событие только при смене статуса на следующем poll).
@@ -353,6 +361,33 @@ class App:
     # ------------------------------------------------------------------
     # Clock manager helpers
     # ------------------------------------------------------------------
+
+    def _init_midi_clock_out(self) -> None:
+        """Исходящий MIDI Clock и Start/Continue/Stop на порты с ``clock: true``."""
+        cm = self._clock_manager
+        registry = self._port_registry
+        if cm is None or registry is None or not self._clock_labels:
+            return
+        send = make_clock_sender(
+            lambda: {out.label: out for out in registry.all_outputs()},
+            self._clock_labels,
+        )
+        # Во внешнем MIDI-режиме тайминг ведёт чужой клок — свой не шлём.
+        self._midi_clock = MidiClockOutput(
+            send,
+            is_master=lambda: cm.current_source is not ClockSource.MIDI,
+        )
+        cm.add_transport_listener(self._on_transport_clock)
+        log.info("MIDI clock out: порты %s", ", ".join(sorted(self._clock_labels)))
+
+    def _on_transport_clock(self, event: str, beat: float) -> None:
+        midi_clock = self._midi_clock
+        if midi_clock is None:
+            return
+        if event == "start":
+            midi_clock.start(beat)
+        elif event == "stop":
+            midi_clock.stop()
 
     def _init_clock_manager(self, sync_config) -> None:
         """Create TickProxy, ClockManager, CaptureOutput and Transport."""
@@ -423,6 +458,10 @@ class App:
         def hooked_dispatch(event):
             if event.name == "TICK":
                 cm.on_tick()
+                # Читаем на каждом тике: MIDI-клок создаётся после этой установки хука.
+                midi_clock = self._midi_clock
+                if midi_clock is not None:
+                    midi_clock.on_position(timeline.current_time)
                 bpm_now = cm.state.bpm or self._sync_bpm
                 # Мутация до генерации — generate() использует новые параметры.
                 # §4.1: подтянуть mutate из треков (freeze / set_track_mutate
@@ -755,6 +794,10 @@ class App:
                     density_applicable=density_applicable,
                     channel=int(track.channel),
                     color_slot=track.color_slot,
+                    degrees=tuple(
+                        getattr(track, "pending_degrees", None)
+                        or getattr(track, "degrees", ())
+                    ),
                 )
             )
         return tuple(summaries)

@@ -27,8 +27,11 @@ class TestSetTrackDegrees:
         pad = session.create_melodic_track("pad")
         result = ctl.set_track_degrees(pad.name, [0, 4, 3, 0])
         assert not result.error
-        assert result.message == f'track "{pad.name}": degrees = I V IV I'
-        assert pad.degrees == (0, 4, 3, 0)
+        assert result.message.startswith(
+            f'track "{pad.name}": degrees queued = I V IV I'
+        )
+        assert pad.pending_degrees == (0, 4, 3, 0)
+        assert pad.degrees == (0, 3, 2, 0)  # играет старое до границы ступени
 
     def test_empty_is_error_and_state_kept(self) -> None:
         ctl, session = make_control()

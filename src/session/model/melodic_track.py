@@ -76,13 +76,15 @@ class MelodicTrack(Track):
         self._voicing: str = ""
         self._inversion: int = 0
         self._degrees: tuple[int, ...] = (0, 3, 2, 0)
+        # B2: правка degrees ждёт границы ступени; играет _degrees.
+        self._pending_degrees: tuple[int, ...] | None = None
         # Порядок важен: inversion проверяется относительно voicing.
         self.voicing = voicing if voicing is not None else self.profile.default_voicing
         self.inversion = inversion
         self.octave: int = octave if octave is not None else self.profile.default_octave
         self.gate: float = gate if gate is not None else self.profile.default_gate
         if degrees is not None:
-            self.degrees = degrees
+            self._degrees = self._validate_degrees(degrees)
         self._revision = 0  # конструирование — не правка
         self.mutate: float = 0.5
         self.density: float = 1.0
@@ -95,22 +97,55 @@ class MelodicTrack(Track):
 
     @property
     def revision(self) -> int:
-        """Растёт при любом изменении degrees/voicing/inversion/profile."""
+        """Растёт при любом изменении играющих degrees (на границе ступени), voicing, inversion, profile."""
         return self._revision
 
     @property
     def degrees(self) -> tuple[int, ...]:
-        """Прогрессия в ступенях (неизменяемый ``tuple``)."""
+        """Играющая прогрессия в ступенях (неизменяемый ``tuple``).
+
+        Правка через сеттер попадает в :attr:`pending_degrees` и становится
+        играющей только после :meth:`commit_pending_degrees` (B2: на границе
+        текущей ступени, её вызывает :class:`MelodicEngine`).
+        """
         return self._degrees
 
     @degrees.setter
     def degrees(self, value: Iterable[int]) -> None:
-        """Задать прогрессию.
+        """Запросить новую прогрессию (применится на границе ступени).
+
+        Значение, совпадающее с играющим, отменяет ожидающую правку.
 
         Raises:
             ValueError: Пусто, длина > 16 или ступень вне ``0..13``.
             TypeError: Не последовательность или элемент не ``int``.
         """
+        new = self._validate_degrees(value)
+        self._pending_degrees = None if new == self._degrees else new
+
+    @property
+    def pending_degrees(self) -> tuple[int, ...] | None:
+        """Прогрессия, которая применится на следующей границе ступени, или ``None``."""
+        return self._pending_degrees
+
+    def commit_pending_degrees(self) -> bool:
+        """Сделать ожидающую прогрессию играющей (B2).
+
+        Вызывается движком на границе текущей ступени. Увеличивает ``revision``:
+        производные (NoteDrift) пересинхронизируются по нему.
+
+        Returns:
+            True, если была ожидающая правка и она применена.
+        """
+        if self._pending_degrees is None:
+            return False
+        self._degrees = self._pending_degrees
+        self._pending_degrees = None
+        self._revision += 1
+        return True
+
+    def _validate_degrees(self, value: Iterable[int]) -> tuple[int, ...]:
+        """Проверить прогрессию и вернуть её как ``tuple``."""
         if isinstance(value, (str, bytes)):
             raise TypeError(
                 f"degrees: ожидается последовательность int, получено {value!r}"
@@ -134,9 +169,7 @@ class MelodicTrack(Track):
                     f"degrees: ступень {d} вне диапазона 0..{MAX_DEGREE - 1} "
                     f"(текущее значение {self._degrees})"
                 )
-        if new != self._degrees:
-            self._degrees = new
-            self._revision += 1
+        return new
 
     @property
     def voicing(self) -> str:

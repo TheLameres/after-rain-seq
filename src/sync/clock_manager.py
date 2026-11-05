@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from src.sync.clock_source import (
@@ -75,6 +76,10 @@ class ClockManager:
         self._midi_transport_started: bool = False
         self._error: str | None = None
         self._running: bool = False
+        # Слушатели транспорта: (event, beat), event = "start" | "stop".
+        # Вызываются до активации/после остановки источника (порядок важен
+        # для MIDI-выхода: Start должен уйти раньше первого импульса).
+        self._transport_listeners: list[Callable[[str, float], None]] = []
 
         # Watchdog квантизации: сколько idle-раундов подряд таймлайн
         # не продвинулся (тихий внешний клок — MIDI без устройства,
@@ -91,11 +96,24 @@ class ClockManager:
     # Lifecycle
     # ------------------------------------------------------------------
 
+    def add_transport_listener(self, listener: Callable[[str, float], None]) -> None:
+        """Подписаться на старт/стоп транспорта (для исходящего MIDI Clock)."""
+        self._transport_listeners.append(listener)
+
+    def _notify_transport(self, event: str) -> None:
+        beat = float(self._timeline.current_time)
+        for listener in self._transport_listeners:
+            try:
+                listener(event, beat)
+            except Exception as exc:  # noqa: BLE001 — слушатель не должен ронять часы
+                log.warning("ClockManager: transport listener %s error: %s", event, exc)
+
     def start(self) -> None:
         """Start the initial clock source."""
         if self._running:
             return
         self._running = True
+        self._notify_transport("start")
         self._activate_source(
             self._config.initial_source, self._config.midi_device_name
         )
@@ -107,6 +125,7 @@ class ClockManager:
             return
         self._running = False
         self._all_notes_off()
+        self._notify_transport("stop")
         self._stop_current_source()
         log.info("ClockManager stopped")
 

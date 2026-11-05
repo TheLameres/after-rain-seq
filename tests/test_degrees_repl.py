@@ -20,33 +20,38 @@ class TestTrackDegreesCommand:
         pad = session.create_melodic_track("pad")
         res = ex.execute(f"track degrees {pad.name} I IV V I")
         assert res.code == 0
-        assert pad.degrees == (0, 3, 4, 0)
+        assert pad.pending_degrees == (0, 3, 4, 0)
         assert "I IV V I" in res.output
 
     def test_numeric_and_mixed(self) -> None:
         ex, session = make_executor()
         pad = session.create_melodic_track("pad")
         assert ex.execute(f"track degrees {pad.name} 0 4 3 0").code == 0
-        assert pad.degrees == (0, 4, 3, 0)
+        assert pad.pending_degrees == (0, 4, 3, 0)
         assert ex.execute(f"track degrees {pad.name} I 7 IV 13").code == 0
-        assert pad.degrees == (0, 7, 3, 13)
+        assert pad.pending_degrees == (0, 7, 3, 13)
 
     def test_quoted_name_with_space(self) -> None:
         ex, session = make_executor()
         pad = session.create_melodic_track("pad")
         res = ex.execute(f'track degrees "{pad.name}" I V')
         assert res.code == 0
-        assert pad.degrees == (0, 4)
+        assert pad.pending_degrees == (0, 4)
 
-    def test_unquoted_name_with_space_resolves_to_existing_track(self) -> None:
+    def test_unquoted_name_resolves_to_second_track(self) -> None:
+        """«Pad 2» без кавычек: цель — вторая дорожка, первая не должна меняться.
+
+        Ловит подмену резолвера на «первая дорожка» и на «первый токен имени».
+        """
         ex, session = make_executor()
         pad1 = session.create_melodic_track("pad")
-        session.create_melodic_track(
-            "pad"
-        )  # "Pad 2" — значение «1» не должно съесть имя
-        res = ex.execute(f"track degrees {pad1.name} I IV")
+        pad2 = session.create_melodic_track("pad")
+        assert (pad1.name, pad2.name) == ("Pad 1", "Pad 2")
+        res = ex.execute("track degrees Pad 2 I IV")
         assert res.code == 0, res.output
-        assert pad1.degrees == (0, 3)
+        assert pad2.pending_degrees == (0, 3)
+        assert pad1.pending_degrees is None
+        assert pad1.degrees == (0, 3, 2, 0)
 
     def test_unknown_track(self) -> None:
         ex, _ = make_executor()

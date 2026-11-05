@@ -58,6 +58,9 @@ class PortConfig(BaseModel):
         If ``True``, CC automation is not sent to this port (e.g. controller
         ports like Launch Control XL 3 that should not receive CC from
         generators).  Maps to ``_no_automation: true`` in cc_map config.
+    clock:
+        If ``True`` (default), MIDI Clock and Start/Continue/Stop are sent to
+        this output while the app is the clock master (internal or Link).
     """
 
     label: str
@@ -65,6 +68,7 @@ class PortConfig(BaseModel):
     serial: str | None = None
     role: str = "melodic"
     no_automation: bool = False
+    clock: bool = True
 
 
 class PortsConfig(BaseModel):

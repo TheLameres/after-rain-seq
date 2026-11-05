@@ -36,6 +36,7 @@ def test_degrees_cannot_be_mutated_in_place() -> None:
 def test_degrees_setter_accepts_list_and_stores_tuple() -> None:
     t = _pad()
     t.degrees = [0, 1, 2, 3]
+    t.commit_pending_degrees()
     assert t.degrees == (0, 1, 2, 3)
 
 
@@ -44,6 +45,7 @@ def test_degrees_setter_copies_input() -> None:
     src = [0, 1, 2]
     t.degrees = src
     src.append(5)
+    t.commit_pending_degrees()
     assert t.degrees == (0, 1, 2)
 
 
@@ -73,12 +75,14 @@ def test_degrees_out_of_range_raises(bad: list[int]) -> None:
 def test_degrees_boundaries_accepted() -> None:
     t = _pad()
     t.degrees = [0, 13]
+    t.commit_pending_degrees()
     assert t.degrees == (0, 13)
 
 
 def test_degrees_length_boundaries() -> None:
     t = _pad()
     t.degrees = [0] * MAX_DEGREES_LEN
+    t.commit_pending_degrees()
     assert len(t.degrees) == 16
     with pytest.raises(ValueError, match="длина"):
         t.degrees = [0] * (MAX_DEGREES_LEN + 1)
@@ -198,6 +202,7 @@ def test_revision_grows_on_each_edit() -> None:
     t = _pad()
     r = t.revision
     t.degrees = [0, 1]
+    t.commit_pending_degrees()
     assert t.revision > r
     r = t.revision
     t.voicing = "1-3-5-7"

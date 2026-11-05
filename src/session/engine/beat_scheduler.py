@@ -27,7 +27,7 @@ from __future__ import annotations
 import bisect
 import logging
 
-from src.sync.transport_event import TransportEvent
+from src.sync.transport_event import EventKind, TransportEvent
 
 log = logging.getLogger(__name__)
 
@@ -111,6 +111,35 @@ class BeatScheduler:
             event: Событие с абсолютным beat.
         """
         bisect.insort(self._pending, event, key=lambda ev: ev.beat)
+
+    def cancel_from(self, beat: float) -> int:
+        """Снять ожидающие note-on, начинающиеся не раньше ``beat`` (B2).
+
+        Используется, когда новая прогрессия должна начаться с границы ``beat``:
+        запланированные вперёд note-on старой прогрессии снимаются. Note-off
+        и прочие события не трогаются: note-off всегда заканчивает ноту, а
+        лишний note-off безвреден, тогда как зависшая нота — нет. Длительность
+        ноты не превышает шага ступени, поэтому звучащие ноты заканчиваются
+        не позже ``beat``.
+
+        Args:
+            beat: Граница, начиная с которой note-on снимаются.
+
+        Returns:
+            Количество снятых событий.
+        """
+        kept = [
+            ev
+            for ev in self._pending
+            if not (ev.kind is EventKind.NOTE_ON and ev.beat >= beat - self._epsilon)
+        ]
+        removed = len(self._pending) - len(kept)
+        self._pending = kept
+        return removed
+
+    def rewind_to(self, beat: float) -> None:
+        """Передвинуть watermark назад на ``beat`` (после :meth:`cancel_from`)."""
+        self._watermark = float(beat)
 
     def due(self, now: float) -> list[TransportEvent]:
         """Изъять и вернуть события, время которых наступило.

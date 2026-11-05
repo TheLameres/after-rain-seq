@@ -32,6 +32,7 @@ from src.session.engine.generators import (
 )
 from src.session.events.note_event import NoteEvent
 from src.session.model.melodic_track import MelodicTrack
+from src.session.model.pattern_spec import FAMILY_CHORD_SOURCE, FAMILY_FREE_MONO
 from src.sync.transport_event import TransportEvent
 
 if TYPE_CHECKING:
@@ -66,6 +67,9 @@ class MelodicEngine:
         self._port_label = port_label
         self._scheduler = BeatScheduler(horizon=horizon)
         self._mutation_engine = mutation_engine
+        # B2: фаза паттерна и сетки ступеней. Сдвигается только при применении
+        # отложенной прогрессии (на границе ступени).
+        self._origin: float = 0.0
 
     # ------------------------------------------------------------------
     # Публичный API
@@ -112,9 +116,14 @@ class MelodicEngine:
         Returns:
             Количество событий, положенных в очередь на этой тике.
         """
+        # B2: движок ещё не играет — правка применяется сразу, с текущей точки.
+        if not self._scheduler.initialized and self._track.pending_degrees is not None:
+            self._commit_pending(current_beat, move_origin=True)
         if self._port_label is None:
             return 0
         self._scheduler.ensure(current_beat)
+        if self._track.pending_degrees is not None:
+            self._apply_pending_at(current_beat)
         self._extend_horizon(current_beat)
         # §4.6: mute дорожки не даёт звука, но горизонт и планировщик
         # продолжают идти — снятие mute возвращает дорожку в такт.
@@ -156,9 +165,82 @@ class MelodicEngine:
         while self._scheduler.watermark < target - 1e-9:
             start = self._scheduler.watermark
             end = start + self._scheduler.horizon
-            for event in self._build_window(start, end):
-                self._scheduler.schedule(event)
+            pos = start
+            while pos < end - 1e-9:
+                # B2: окно режется по границе текущей ступени. Всё до границы
+                # строится по старой прогрессии, после — по новой.
+                cut = end
+                boundary: float | None = None
+                if self._track.pending_degrees is not None:
+                    boundary = self._next_boundary(pos)
+                    cut = min(max(boundary, pos), end)
+                for event in self._build_window(pos, cut):
+                    self._scheduler.schedule(event)
+                if boundary is not None and boundary <= cut + 1e-9:
+                    self._commit_pending(cut, move_origin=self._step_len() is not None)
+                pos = cut
             self._scheduler.advance(end)
+
+    def _apply_pending_at(self, now: float) -> None:
+        """Подготовить применение отложенной прогрессии после текущей ступени (B2).
+
+        Граница — первая граница ступени строго после ``now``. Ноты, уже
+        запланированные вперёд с этой границы (лукахед), снимаются и строятся
+        заново по новой прогрессии; звучащие ноты доигрывают.
+        """
+        step = self._step_len()
+        if step is None:
+            # Ступеней нет (slicer и т. п.): прогрессия на звук не влияет.
+            self._commit_pending(now, move_origin=False)
+            return
+        index = math.floor((now - self._origin) / step + 1e-9)
+        boundary = self._origin + (index + 1) * step
+        cancelled = self._scheduler.cancel_from(boundary)
+        if self._scheduler.watermark > boundary + 1e-9:
+            self._scheduler.rewind_to(boundary)
+        log.debug(
+            "MelodicEngine %s: правка ступеней ждёт границы %.3f (снято %d событий)",
+            self._track.name,
+            boundary,
+            cancelled,
+        )
+
+    def _step_len(self) -> float | None:
+        """Длительность одной ступени в beats; ``None`` — ступени не используются.
+
+        Для chord_source (pad, atmos) и free_mono (bass, lead, texture) ступень
+        занимает ``change_every`` beats. Остальные семьи прогрессию не читают.
+        """
+        spec = self._track.profile.pattern
+        if spec.family in (FAMILY_CHORD_SOURCE, FAMILY_FREE_MONO):
+            return float(spec.change_every)
+        return None
+
+    def _next_boundary(self, pos: float) -> float:
+        """Первая граница ступени не раньше ``pos``."""
+        step = self._step_len()
+        if step is None:
+            return pos
+        j = math.ceil((pos - self._origin) / step - 1e-9)
+        return self._origin + max(j, 0) * step
+
+    def _commit_pending(self, at: float, move_origin: bool) -> None:
+        """Применить отложенную прогрессию трека с момента ``at`` (B2).
+
+        Args:
+            at: Граница, с которой новая прогрессия начинает играть.
+            move_origin: Переставить фазу паттерна на ``at`` (для ступенчатых семей).
+        """
+        if not self._track.commit_pending_degrees():
+            return
+        if move_origin:
+            self._origin = at
+        log.info(
+            "MelodicEngine %s: прогрессия применена с beat %.3f", self._track.name, at
+        )
+        if self._mutation_engine is not None:
+            # Ресинк сразу, а не на следующем тике: окна до границы уже построены.
+            self._mutation_engine.refresh_track(self._track.name)
 
     def _build_window(self, start: float, end: float) -> list[TransportEvent]:
         """Построить TransportEvent на окно [start, end) из паттерна.
@@ -182,10 +264,10 @@ class MelodicEngine:
         events: list[TransportEvent] = []
         # Обход по циклам (k снаружи) — abs beats неубывают; свинг
         # без состояния: чётность берётся из abs_beat (§4.2).
-        k = max(0, math.floor(start / pattern_len))
-        while k * pattern_len < end - 1e-9:
+        k = max(0, math.floor((start - self._origin) / pattern_len))
+        while self._origin + k * pattern_len < end - 1e-9:
             for note in notes:
-                abs_beat = note.beat + k * pattern_len
+                abs_beat = self._origin + note.beat + k * pattern_len
                 if start - 1e-9 <= abs_beat < end:
                     events.extend(self._note_to_events(note, abs_beat))
             k += 1

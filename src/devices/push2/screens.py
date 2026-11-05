@@ -62,6 +62,8 @@ from src.devices.push2.widgets import (
     Marker,
     Rect,
 )
+from src.harmony.degree_names import format_degrees
+from src.harmony.progressions import PROGRESSIONS
 
 __all__ = [
     "BODY_Y0",
@@ -164,7 +166,9 @@ class Screen(ABC):
         Экраны, переведённые на Grid, переопределяют метод; остальные пока
         рисуют тело через ``draw_body`` — для них макет не определён.
         """
-        raise NotImplementedError(f"экран {self.name!r} ещё не собран через ScreenLayout")
+        raise NotImplementedError(
+            f"экран {self.name!r} ещё не собран через ScreenLayout"
+        )
 
     def draw(self, fb: FrameBuffer, view: ScreenView) -> None:
         """Отрисовать тело из единого ScreenView (вызывает Screens)."""
@@ -238,6 +242,18 @@ class TracksScreen(Screen):
 # ── TRACK GEN (генерация) ─────────────────────────────────────────────────────
 
 
+def preset_options(current: str) -> tuple[str, ...]:
+    """Список пресетов для E6; для своей прогрессии добавляется пункт ``custom``."""
+    names = tuple(p.name for p in PROGRESSIONS)
+    return names if current else names + ("custom",)
+
+
+def preset_index(current: str) -> int:
+    """Позиция курсора в списке E6: текущий пресет или пункт ``custom``."""
+    names = [p.name for p in PROGRESSIONS]
+    return names.index(current) if current in names else len(names)
+
+
 class TrackGenScreen(Screen):
     """GEN (Clip): энкодеры E1–E5 — SRC/SRC2/GATE/DEN/MUT, E6–E8 пустые.
 
@@ -265,14 +281,23 @@ class TrackGenScreen(Screen):
             Range("GATE (E3)", gate, 0.0, 100.0, unit=" %"),
             Range("DEN (E4)", den, 0.0, 100.0, unit=" %"),
             Range("MUT (E5)", detail.mutate * 100, 0.0, 100.0, unit=" %"),
-        ) + (Empty(),) * (SLOT_COUNT - 5)
+            List(
+                "PRESET (E6)",
+                preset_options(detail.preset),
+                index=preset_index(detail.preset),
+                rows=3,
+            ),
+        ) + (Empty(),) * (SLOT_COUNT - 6)
 
         foot: tuple[SlotItem, ...] = (
             Text("PORT", f"> {detail.port}" if detail.port else "—"),
             Text("CH", str(detail.channel)),
             Text("PROFILE", detail.profile),
-            Text("VOICING", detail.voicing or "—") if detail.kind != "drum" else Empty(),
-        ) + (Empty(),) * 4
+            Text("VOICING", detail.voicing or "—")
+            if detail.kind != "drum"
+            else Empty(),
+            Text("DEG", format_degrees(detail.degrees) if detail.degrees else "\u2014"),
+        ) + (Empty(),) * 3
 
         return ScreenLayout(
             encoders=encoders,
@@ -322,9 +347,7 @@ class TrackMacroScreen(Screen):
                 Text("PORT", "NO PORT — CC NOT SENT", color=Colors.DISCONNECTED),
             ) + (Empty(),) * 7
 
-        return ScreenLayout(
-            encoders=encoders, foot=foot, stripe=macro.color or None
-        )
+        return ScreenLayout(encoders=encoders, foot=foot, stripe=macro.color or None)
 
     def draw_body(self, fb: FrameBuffer, body: TrackMacroView) -> None:
         """MACRO body через Grid-макет."""
@@ -460,7 +483,9 @@ class SetupScreen(Screen):
         if sync.tab == "clock":
             sources = sync.sources or ("—",)
             index = sources.index(sync.source) if sync.source in sources else 0
-            encoders: tuple[SlotItem, ...] = (List("SOURCE (E1)", sources, index=index),)
+            encoders: tuple[SlotItem, ...] = (
+                List("SOURCE (E1)", sources, index=index),
+            )
         else:
             encoders = ()
         encoders += (Empty(),) * (SLOT_COUNT - len(encoders))
@@ -480,9 +505,7 @@ class SetupScreen(Screen):
         w = FRAME_W - x - 8
         y = KNOBS_Y0 + 6
         for label, value, color in self._info_lines(body):
-            Text(label, value, color=color).render(
-                fb, Rect(x, y, w, 16)
-            )
+            Text(label, value, color=color).render(fb, Rect(x, y, w, 16))
             y += 18
 
     @staticmethod
@@ -541,7 +564,8 @@ class DemoScreen(Screen):
         top = demo.top_tabs
         top_active = demo.top_index % len(top)
         upper = tuple(
-            Button(tab, active=i == top_active) for i, tab in enumerate(top[:SLOT_COUNT])
+            Button(tab, active=i == top_active)
+            for i, tab in enumerate(top[:SLOT_COUNT])
         ) + (Empty(),) * (SLOT_COUNT - len(top[:SLOT_COUNT]))
 
         bottom = demo.bottom_tabs
@@ -555,7 +579,11 @@ class DemoScreen(Screen):
 
         encoders: tuple[SlotItem, ...] = (
             List("TOP (E1)", top, index=top_active),
-            List("BOTTOM (E2)", bottom, index=demo.bottom_index % len(bottom) if bottom else 0),
+            List(
+                "BOTTOM (E2)",
+                bottom,
+                index=demo.bottom_index % len(bottom) if bottom else 0,
+            ),
         ) + tuple(
             Range(f"E{i + 3}", max(0, min(127, value)), 0.0, 127.0)
             for i, value in enumerate(demo.values[:6])
@@ -606,8 +634,16 @@ class PortsScreen(Screen):
         # Статус портов строками в FOOT (по два слота на порт).
         foot: list[SlotItem] = []
         for row in ports.rows[:4]:
-            foot.append(Text(row.label, row.status, color=_PORT_STATUS_COLORS.get(row.status, Colors.DIM)))
-        route = f"{ports.route_track} -> " + (f"> {ports.route_port}" if ports.route_port else "-")
+            foot.append(
+                Text(
+                    row.label,
+                    row.status,
+                    color=_PORT_STATUS_COLORS.get(row.status, Colors.DIM),
+                )
+            )
+        route = f"{ports.route_track} -> " + (
+            f"> {ports.route_port}" if ports.route_port else "-"
+        )
         foot.append(Text("ROUTE", route, color=Colors.WHITE))
         padded = tuple(foot) + (Empty(),) * (SLOT_COUNT - len(foot))
         return ScreenLayout(encoders=encoders, foot=padded[:SLOT_COUNT])

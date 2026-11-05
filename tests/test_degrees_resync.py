@@ -93,6 +93,7 @@ class TestDegreesReachDrift:
         drift = me.get_note_drift("L")
         assert drift is not None
         t.degrees = [5, 5, 5]
+        t.commit_pending_degrees()  # граница ступени (B2)
         assert drift.current_degrees == [0, 2, 4]  # до тика — старое
         me.tick(0.0, 120.0)
         assert drift.current_degrees == [5, 5, 5]
@@ -102,6 +103,7 @@ class TestDegreesReachDrift:
         t = MelodicTrack(name="L", profile_name="lead", degrees=[0, 2, 4])
         me = _engine_with(t)
         t.degrees = [6, 6, 6]
+        t.commit_pending_degrees()  # граница ступени (B2)
         me.tick(0.0, 120.0)
         ctx = GenerationContext(track=t, note_drift=me.get_note_drift("L"))
         assert {n.degree for n in generate_notes(ctx)} == {6}
@@ -110,6 +112,7 @@ class TestDegreesReachDrift:
         t = MelodicTrack(name="T", profile_name="texture", degrees=[0, 2])
         me = _engine_with(t)
         t.degrees = [4, 1]
+        t.commit_pending_degrees()  # граница ступени (B2)
         me.tick(0.0, 120.0)
         ctx = GenerationContext(track=t, note_drift=me.get_note_drift("T"))
         assert [n.degree for n in generate_notes(ctx)] == [4]
@@ -122,6 +125,7 @@ class TestDegreesReachDrift:
             beat += 1000.0
             me.tick(beat, 120.0)
         t.degrees = [1, 2]
+        t.commit_pending_degrees()  # граница ступени (B2)
         for _ in range(20):
             beat += 1000.0
             me.tick(beat, 120.0)
@@ -145,6 +149,7 @@ class TestDegreesReachDrift:
         t = MelodicTrack(name="P", profile_name="pad", degrees=[0, 3])
         me = _engine_with(t)
         t.degrees = [1, 2, 3]
+        t.commit_pending_degrees()  # граница ступени (B2)
         me.tick(0.0, 120.0)
         assert me.get_note_drift("P") is None
         assert me.get_param_drift("P") is not None
@@ -156,6 +161,7 @@ class TestDegreesReachDrift:
         count_state = me.get_state("L").mutation_count  # type: ignore[union-attr]
         count_track = t.mutation_count
         t.degrees = [1, 2, 3]
+        t.commit_pending_degrees()  # граница ступени (B2)
         me.tick(0.0, 120.0)  # раньше next_mutation_beat — мутации нет
         assert me.get_state("L").mutation_count == count_state  # type: ignore[union-attr]
         assert t.mutation_count == count_track
@@ -166,6 +172,7 @@ class TestDegreesReachDrift:
         t.freeze()
         me.sync_mutate("L", t.mutate)
         t.degrees = [3, 3, 3]
+        t.commit_pending_degrees()  # граница ступени (B2)
         me.tick(10_000.0, 120.0)
         drift = me.get_note_drift("L")
         assert drift is not None
@@ -180,6 +187,7 @@ class TestDegreesReachDrift:
         t.freeze()
         me.sync_mutate("L", t.mutate)
         t.degrees = [3, 3, 3]
+        t.commit_pending_degrees()  # граница ступени (B2)
         beat = 0.0
         for _ in range(30):
             beat += 1000.0
@@ -325,6 +333,7 @@ class TestRefreshTrack:
         t = MelodicTrack(name="L", profile_name="lead")
         me = _engine_with(t)
         t.degrees = [1, 2]
+        t.commit_pending_degrees()  # граница ступени (B2)
         me.tick(0.0, 120.0)
         d = me.get_note_drift("L")
         me.tick(0.0, 120.0)
@@ -345,6 +354,7 @@ class TestEndToEnd:
         eng = MelodicEngine(t, h, q, "default", mutation_engine=me)
         assert [n.degree for n in eng._pattern()[0]] == [0, 2, 4, 2]
         t.degrees = [5, 5, 5, 5]
+        t.commit_pending_degrees()  # граница ступени (B2)
         me.tick(0.0, 120.0)
         assert [n.degree for n in eng._pattern()[0]] == [5, 5, 5, 5]
 
@@ -357,4 +367,5 @@ class TestEndToEnd:
         eng = MelodicEngine(t, h, q, "default", mutation_engine=me)
         n0 = len(eng._pattern()[0])
         t.degrees = [0, 3, 4]
+        t.commit_pending_degrees()  # граница ступени (B2)
         assert len(eng._pattern()[0]) == n0 + 3

@@ -55,6 +55,8 @@ class TrackDetailView:
     density: float | None  # 0..1; None → «—»
     mutate: float  # 0..1 (0 = frozen)
     color: int = 0  # BGR565 — полоса слева в body
+    degrees: tuple[int, ...] = ()  # целевая прогрессия (ступени)
+    preset: str = ""  # имя пресета из PROGRESSIONS; пусто — своя
 
 
 @dataclass(frozen=True)

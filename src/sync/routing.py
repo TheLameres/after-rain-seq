@@ -86,6 +86,14 @@ class MidiPortOutput:
     # isobar output device interface
     # ------------------------------------------------------------------
 
+    def send_realtime(self, msg: MidiMessage) -> None:
+        """Send a System Real-Time message (clock, start, continue, stop).
+
+        Bypasses CC throttling and note batching: real-time messages must go
+        out immediately to keep the external gear in phase.
+        """
+        self._port.send(msg)
+
     def all_notes_off(self) -> None:
         """Send All Notes Off (CC 123) on all 16 channels.
 

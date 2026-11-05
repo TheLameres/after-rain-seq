@@ -52,6 +52,7 @@ from src.devices.push2.layout import Button
 from src.devices.push2.screens import DEFAULT_SCREENS, scale_root_rows
 from src.devices.push2.track_colors import track_color
 from src.devices.push2.widgets import SLOT_COUNT
+from src.harmony import progressions
 from src.repl.engine_control import EngineControl
 from src.repl.render import render_text
 from src.repl.status import StatusSnapshot, TrackSummary
@@ -581,10 +582,15 @@ class ScreenController:
             else self._engine.create_track(profile)
         )
         result = created
-        if port != WIZARD_ROUTE_NONE and not created.error:
-            routed = self._engine.route_track(str(created.data["track"]), port)
-            if routed.error:
-                result = routed
+        track_name = created.data.get("track") if not created.error else None
+        if track_name is not None:
+            if port == WIZARD_ROUTE_NONE:
+                # «—» — осознанно без порта: новая дорожка по умолчанию уже привязана.
+                result = self._engine.unroute_track(str(track_name))
+            else:
+                routed = self._engine.route_track(str(track_name), port)
+                if routed.error:
+                    result = routed
         self.state.flash(render_text(result), now, self._flash_seconds)
 
     def _move_cursor(self, delta: int, snap: StatusSnapshot) -> None:
@@ -671,6 +677,8 @@ class ScreenController:
                 ),
                 now,
             )
+        elif idx == 5:
+            self._cycle_preset(track, increment, now)
         elif idx == 4:
             self._command(
                 self._engine.set_track_mutate(
@@ -679,6 +687,13 @@ class ScreenController:
                 now,
             )
         # E6..E8 на GEN не назначены (CC-оси переехали на MACRO: E1..E3).
+
+    def _cycle_preset(self, track: TrackSummary, increment: int, now: float) -> None:
+        """E6 на GEN: переключить пресет прогрессии (правка уйдёт на границу ступени, B2)."""
+        if increment == 0:
+            return
+        preset = progressions.next_progression(track.degrees, increment)
+        self._command(self._engine.set_track_degrees(track.name, preset.degrees), now)
 
     def _track_macro_encoder(
         self, idx: int, increment: int, snap: StatusSnapshot
@@ -1020,6 +1035,8 @@ class ScreenController:
             density=track.density if track.density_applicable else None,
             mutate=track.mutate,
             color=self._track_color_for_selection(snap),
+            degrees=track.degrees,
+            preset=progressions.name_of(track.degrees),
         )
 
     def _track_macro(self, snap: StatusSnapshot) -> TrackMacroView | None:

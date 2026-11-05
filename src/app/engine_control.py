@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import replace
 from typing import Protocol
@@ -30,6 +31,8 @@ from src.sync.ports import PortManager
 from src.sync.routing import PortRegistry
 from src.sync.swing import SwingApplier
 from src.sync.transport import Transport
+
+log = logging.getLogger(__name__)
 
 
 class AppPorts(Protocol):
@@ -237,11 +240,47 @@ class AppEngineControl(EngineControl):
         """Сводки дорожек из снапшота (топологический порядок)."""
         return list(self.get_status().tracks)
 
+    def _default_output_label(self) -> str | None:
+        """Метка первого настроенного выходного порта (или ``None``).
+
+        Новая дорожка сразу привязывается к нему: без маршрута её движок
+        пишет в несуществующий порт, и транспорт молча отбрасывает ноты.
+        """
+        manager = self._app.port_manager
+        if manager is None:
+            return None
+        states = manager.all_states()
+        for state in states:
+            if state.direction == "output":
+                return state.label
+        return None
+
+    def _route_new_track(self, name: str) -> None:
+        """Привязать только что созданную дорожку к первому выходу.
+
+        Ошибка маршрута не отменяет создание: дорожку можно привязать позже
+        (``track route``), а сообщение об этом уходит в лог.
+        """
+        label = self._default_output_label()
+        if label is None:
+            return
+        routed = self._app.route_track(name, label)
+        if routed.error:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "create_track: не удалось привязать %s к %r: %s",
+                name,
+                label,
+                routed.message,
+            )
+
     def create_track(self, profile: str, channel: int | None = None) -> EngineResult:
         """Создать melodic-дорожку профиля (лимиты — текстом).
 
         Канал: ``None`` — автоназначение первого свободного (без слипания
         с другими дорожками на порту); иначе явный 0..15.
+        Дорожка сразу привязывается к первому настроенному выходу.
         """
         session = self._app.session
         if session is None:
@@ -253,8 +292,11 @@ class AppEngineControl(EngineControl):
             track = session.create_melodic_track(profile, channel=channel)
         except ValueError as exc:
             return EngineResult.fail(f"{exc}")
+        self._route_new_track(track.name)
+        port = track.port or "—"
         return EngineResult.ok(
-            f'created track "{track.name}" (profile {profile}, ch {track.channel})',
+            f'created track "{track.name}" (profile {profile}, ch {track.channel}, '
+            f"port {port})",
             track=track.name,
         )
 
@@ -329,8 +371,10 @@ class AppEngineControl(EngineControl):
             track = session.create_drum_track()
         except ValueError as exc:
             return EngineResult.fail(f"{exc}")
+        self._route_new_track(track.name)
+        port = track.port or "—"
         return EngineResult.ok(
-            f'created track "{track.name}" (drum, ch {track.channel})',
+            f'created track "{track.name}" (drum, ch {track.channel}, port {port})',
             track=track.name,
         )
 
@@ -425,10 +469,14 @@ class AppEngineControl(EngineControl):
             track.degrees = list(degrees)
         except (ValueError, TypeError) as exc:
             return EngineResult.fail(f"track {name!r}: {exc}")
-        return EngineResult.ok(
-            f'track "{name}": degrees = {format_degrees(track.degrees)}',
-            degrees=list(track.degrees),
-        )
+        if track.pending_degrees is None:
+            text = f'track "{name}": degrees = {format_degrees(track.degrees)}'
+        else:
+            text = (
+                f'track "{name}": degrees queued = '
+                f"{format_degrees(track.pending_degrees)} (applies after the current step)"
+            )
+        return EngineResult.ok(text, degrees=list(track.degrees))
 
     def set_track_voicing(self, name: str, voicing: str) -> EngineResult:
         """Задать voicing (C2). Неизвестное имя — ``EngineResult.fail``."""
