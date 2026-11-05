@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import random
+from collections.abc import Sequence
 
 from src.session.mutation.drift_tables import (
     MECH_EUCLIDEAN,
@@ -66,6 +67,10 @@ class MutationEngine:
         self._track_mutate: dict[str, float] = {}
         # §4.4: дорожки-владельцы счётчика (пишем в них, читаем из них).
         self._track_refs: dict[str, object] = {}
+        # B1: ревизия трека, с которой механизм синхронизирован, и параметры
+        # регистрации (для пересоздания механизма при смене профиля).
+        self._track_revision: dict[str, int] = {}
+        self._reg_params: dict[str, dict[str, float | int]] = {}
 
     # ------------------------------------------------------------------
     # Регистрация
@@ -110,14 +115,41 @@ class MutationEngine:
         self._track_profiles[track_name] = profile_name
         self._track_mutate[track_name] = effective_mutate
 
-        # Создаём механизм по профилю (таблица PROFILE_MECHANISM, C6)
+        self._reg_params[track_name] = {
+            "scale_length": scale_length,
+            "euclidean_steps": euclidean_steps,
+            "euclidean_pulses": euclidean_pulses,
+            "gate": gate,
+        }
+        self._track_revision[track_name] = int(getattr(track, "revision", 0))
+        self._build_mechanism(track_name, profile_name, degrees, gate)
+
+        # Инициализируем состояние
+        next_beat = self._compute_next_mutation_beat(0.0, bpm)
+        self._states[track_name] = MutationState(
+            mutate=effective_mutate,
+            mutation_count=0,
+            next_mutation_beat=next_beat,
+            last_mutation_beat=0.0,
+        )
+        log.debug("MutationEngine: зарегистрирован %s (%s)", track_name, profile_name)
+
+    def _build_mechanism(
+        self,
+        track_name: str,
+        profile_name: str,
+        degrees: Sequence[int] | None,
+        gate: float,
+    ) -> None:
+        """Создать механизм мутации по профилю (таблица PROFILE_MECHANISM, C6)."""
+        params = self._reg_params[track_name]
         mechanism = PROFILE_MECHANISM.get(profile_name)
         if mechanism == MECH_NOTE:
-            base = degrees if degrees is not None else [0, 2, 4, 2]
-            self._note_drifts[track_name] = NoteDrift(base, scale_length)
+            base = list(degrees) if degrees is not None else [0, 2, 4, 2]
+            self._note_drifts[track_name] = NoteDrift(base, int(params["scale_length"]))
         elif mechanism == MECH_EUCLIDEAN:
             self._euclidean_drifts[track_name] = FloatingEuclidean(
-                euclidean_steps, euclidean_pulses
+                int(params["euclidean_steps"]), int(params["euclidean_pulses"])
             )
         elif mechanism == MECH_PARAM:
             pd = ParamDrift()
@@ -132,15 +164,93 @@ class MutationEngine:
             self._param_drifts[track_name] = pd
         # cc_* и неизвестные профили — пропускаем
 
-        # Инициализируем состояние
-        next_beat = self._compute_next_mutation_beat(0.0, bpm)
-        self._states[track_name] = MutationState(
-            mutate=effective_mutate,
-            mutation_count=0,
-            next_mutation_beat=next_beat,
-            last_mutation_beat=0.0,
-        )
-        log.debug("MutationEngine: зарегистрирован %s (%s)", track_name, profile_name)
+    def _drop_mechanisms(self, track_name: str) -> None:
+        """Удалить все механизмы дорожки (состояние ``MutationState`` не трогаем)."""
+        self._note_drifts.pop(track_name, None)
+        self._euclidean_drifts.pop(track_name, None)
+        self._param_drifts.pop(track_name, None)
+
+    def refresh_track(
+        self,
+        track_name: str,
+        degrees: Sequence[int] | None = None,
+        bpm: float = 120.0,
+        profile_name: str | None = None,
+    ) -> None:
+        """Подтянуть механизм дорожки к текущему состоянию трека (B1).
+
+        Трек — источник истины (как для ``mutate``, §4.1): движок читает
+        ``track.revision`` и при расхождении вызывает этот метод.
+
+        - Профиль изменился → механизм пересоздаётся по **новому** профилю
+          (закрывает Д7: после ``set_profile("pad")`` NoteDrift заменяется
+          на ParamDrift). Накопленный дрейф при этом теряется осознанно,
+          счётчики мутаций (трек и ``MutationState``) обнуляются, в лог — ``info``.
+        - Профиль тот же, механизм NoteDrift и ``degrees`` отличаются от базы →
+          ``NoteDrift.set_base`` (закрывает Д6); счётчик мутаций сохраняется.
+        - ``mutate`` (в т.ч. заморозка) и расписание ``next_mutation_beat``
+          не затрагиваются.
+
+        Аргументы:
+            track_name: Имя дорожки (должна быть зарегистрирована).
+            degrees: Текущая прогрессия; None — взять из ``track.degrees``.
+            bpm: Текущий темп (для будущего пересчёта интервала; сейчас не нужен,
+                ``next_mutation_beat`` сохраняется).
+            profile_name: Текущий профиль; None — взять из ``track.profile_name``.
+        """
+        if track_name not in self._states:
+            return
+        track = self._track_refs.get(track_name)
+        if degrees is None and track is not None:
+            degrees = getattr(track, "degrees", None)
+        if profile_name is None:
+            profile_name = getattr(
+                track, "profile_name", None
+            ) or self._track_profiles.get(track_name, "")
+        if track is not None:
+            self._track_revision[track_name] = int(getattr(track, "revision", 0))
+
+        old_profile = self._track_profiles.get(track_name)
+        if profile_name != old_profile:
+            log.info(
+                "MutationEngine: %s профиль %s -> %s, механизм пересоздан",
+                track_name,
+                old_profile,
+                profile_name,
+            )
+            self._track_profiles[track_name] = profile_name
+            self._drop_mechanisms(track_name)
+            gate = float(getattr(track, "gate", self._reg_params[track_name]["gate"]))
+            self._build_mechanism(track_name, profile_name, degrees, gate)
+            # Сброс счётчиков при смене профиля — осознанный (§9): накопленный
+            # дрейф относился к другому механизму.
+            reset = getattr(track, "reset_mutation_count", None)
+            if callable(reset):
+                reset()
+            state = self._states[track_name]
+            self._states[track_name] = MutationState(
+                mutate=state.mutate,
+                mutation_count=0,
+                next_mutation_beat=state.next_mutation_beat,
+                last_mutation_beat=state.last_mutation_beat,
+            )
+            return
+
+        # Правка degrees: счётчик мутаций сохраняется (§9), заморозка не трогается.
+        drift = self._note_drifts.get(track_name)
+        if (
+            drift is not None
+            and degrees is not None
+            and list(degrees) != drift.base_degrees
+        ):
+            drift.set_base(degrees)
+
+    def _sync_revisions(self, bpm: float) -> None:
+        """Ресинк механизмов с треками по ``revision`` (int-сравнение на дорожку)."""
+        for name, track in self._track_refs.items():
+            rev = getattr(track, "revision", None)
+            if rev is not None and rev != self._track_revision.get(name):
+                self.refresh_track(name, bpm=bpm)
 
     def unregister_track(self, track_name: str) -> None:
         """Удалить дорожку из мутации (при удалении из сессии).
@@ -149,9 +259,9 @@ class MutationEngine:
             track_name: Имя дорожки.
         """
         self._track_refs.pop(track_name, None)
-        self._note_drifts.pop(track_name, None)
-        self._euclidean_drifts.pop(track_name, None)
-        self._param_drifts.pop(track_name, None)
+        self._track_revision.pop(track_name, None)
+        self._reg_params.pop(track_name, None)
+        self._drop_mechanisms(track_name)
         self._states.pop(track_name, None)
         self._track_profiles.pop(track_name, None)
         self._track_mutate.pop(track_name, None)
@@ -173,6 +283,8 @@ class MutationEngine:
             Имена дорожек, которые мутировали на этом тике.
         """
         mutated: list[str] = []
+        # B1: правки degrees/профиля доходят до механизмов даже у замороженных.
+        self._sync_revisions(bpm)
         for name, state in self._states.items():
             if state.mutate <= 0.0:
                 continue

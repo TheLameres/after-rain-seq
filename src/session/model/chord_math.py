@@ -49,8 +49,15 @@ def chord_degrees_for(track: ChordTrack, degree: int) -> tuple[int, ...]:
 
     Returns:
         Ступени аккорда относительно тоники лада.
+
+    Raises:
+        HarmonyError: Если ``track.voicing`` нет в ``Voicing.VOICINGS``.
+            Так же ведёт себя :meth:`Voicing.voicing_degrees` — неизвестное имя
+            не должно давать ``KeyError`` на одном пути и ``HarmonyError`` на другом.
+            Для профилей ``cc_only`` аккордов нет и ``voicing`` равно ``""`` —
+            это значение тоже отвергается здесь.
     """
-    offsets = Voicing.VOICINGS[track.voicing]
+    offsets = Voicing.offsets(track.voicing)
     degs = tuple(degree + off for off in offsets)
     if track.inversion > 0:
         degs = Voicing.invert(degs, track.inversion)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import random
+from collections.abc import Sequence
 
 log = logging.getLogger(__name__)
 
@@ -27,6 +28,31 @@ class NoteDrift:
         self._current: list[int] = list(base_degrees)
         self._scale_length: int = scale_length
         self._max_degree: int = scale_length * 2
+
+    def set_base(self, degrees: Sequence[int]) -> None:
+        """Заменить базовую прогрессию (правка ``track.degrees`` пользователем).
+
+        Пользовательская правка — новая истина: накопленный дрейф сбрасывается,
+        ``current`` становится равен новой базе. Смена длины логируется на
+        уровне ``info`` (позиции старого дрейфа не соответствуют новым).
+
+        Аргументы:
+            degrees: Новая базовая прогрессия (непустая).
+
+        Raises:
+            ValueError: Если прогрессия пуста.
+        """
+        new = list(degrees)
+        if not new:
+            raise ValueError("NoteDrift.set_base: пустая прогрессия")
+        if len(new) != len(self._base):
+            log.info(
+                "NoteDrift: длина базы %d -> %d, дрейф сброшен",
+                len(self._base),
+                len(new),
+            )
+        self._base = new
+        self._current = list(new)
 
     def drift_one(self, rng: random.Random) -> bool:
         """Сместить одну случайную ступень на ±1.

@@ -45,7 +45,7 @@ def test_melodic_track_default_pad():
     assert t.octave == 5
     assert t.gate == 0.9
     assert t.inversion == 0
-    assert t.degrees == [0, 3, 2, 0]
+    assert t.degrees == (0, 3, 2, 0)
     assert t.sources == ()
     assert t.port is None
     assert t.muted is False
@@ -64,7 +64,7 @@ def test_melodic_track_custom_overrides():
     assert t.voicing == "1-3-5-7"
     assert t.octave == 4
     assert t.gate == 0.7
-    assert t.degrees == [0, 4, 3, 0]
+    assert t.degrees == (0, 4, 3, 0)
 
 
 def test_melodic_track_unknown_profile():

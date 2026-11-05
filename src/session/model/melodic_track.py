@@ -9,7 +9,9 @@ arp, …) — это **данные** (профиль + параметры), н�
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 
+from src.harmony.voicings import Voicing
 from src.session.events.chord_event import ChordEvent
 from src.session.model.chord_math import chord_degrees_for, pattern_length
 from src.session.model.melodic_profile import PROFILES, MelodicProfile
@@ -17,17 +19,29 @@ from src.session.model.track import Track
 
 log = logging.getLogger(__name__)
 
+MAX_DEGREES_LEN = 16
+"""Максимальная длина прогрессии ``degrees``."""
+
+MAX_DEGREE = 14
+"""Верхняя граница (исключая) ступени: две октавы семиступенного лада.
+Совпадает с ``NoteDrift._max_degree`` при ``scale_length=7``."""
+
 
 class MelodicTrack(Track):
     """Мелодическая дорожка с профилем.
 
     Атрибуты:
         profile: Профиль поведения (см. :class:`MelodicProfile`).
-        voicing: Имя войсинга из ``Voicing.VOICINGS``.
-        inversion: Номер обращения (0..2).
+        voicing: Имя войсинга из ``Voicing.VOICINGS`` (property, валидируется).
+            ``""`` допустим только для ``cc_only``-профилей.
+        inversion: Номер обращения ``0 <= k < len(VOICINGS[voicing])``
+            (property, валидируется).
         octave: Октава (0..8).
         gate: Длительность ноты относительно шага (0.0–1.0).
-        degrees: Собственная прогрессия в ступенях (у источников).
+        degrees: Собственная прогрессия в ступенях (property, ``tuple``,
+            длина 1..16, каждая ступень ``0 <= d < 14``). Неизменяема на месте.
+        revision: Счётчик правок degrees/voicing/inversion/profile. Производные
+            (NoteDrift, кэши) сравнивают свою копию с текущей и ресинхронизируются.
         mutate: Вероятность мутации 0.0–1.0 (0 = заморожено).
         bpm: Текущий темп (для пересчёта интервала мутации).
 
@@ -51,20 +65,25 @@ class MelodicTrack(Track):
         inversion: int = 0,
         octave: int | None = None,
         gate: float | None = None,
-        degrees: list[int] | None = None,
+        degrees: Iterable[int] | None = None,
         color_slot: int | None = None,
     ) -> None:
         super().__init__(name=name, channel=channel, port=port, color_slot=color_slot)
         if profile_name not in PROFILES:
             raise ValueError(f"Неизвестный профиль: {profile_name!r}")
         self.profile: MelodicProfile = PROFILES[profile_name]
-        self.voicing: str = (
-            voicing if voicing is not None else self.profile.default_voicing
-        )
-        self.inversion: int = inversion
+        self._revision: int = 0
+        self._voicing: str = ""
+        self._inversion: int = 0
+        self._degrees: tuple[int, ...] = (0, 3, 2, 0)
+        # Порядок важен: inversion проверяется относительно voicing.
+        self.voicing = voicing if voicing is not None else self.profile.default_voicing
+        self.inversion = inversion
         self.octave: int = octave if octave is not None else self.profile.default_octave
         self.gate: float = gate if gate is not None else self.profile.default_gate
-        self.degrees: list[int] = degrees if degrees is not None else [0, 3, 2, 0]
+        if degrees is not None:
+            self.degrees = degrees
+        self._revision = 0  # конструирование — не правка
         self.mutate: float = 0.5
         self.density: float = 1.0
         """Плотность паттерна 0.0–1.0 (D2): 1.0 — базовый рисунок,
@@ -73,6 +92,109 @@ class MelodicTrack(Track):
     # ------------------------------------------------------------------
     # Свойства
     # ------------------------------------------------------------------
+
+    @property
+    def revision(self) -> int:
+        """Растёт при любом изменении degrees/voicing/inversion/profile."""
+        return self._revision
+
+    @property
+    def degrees(self) -> tuple[int, ...]:
+        """Прогрессия в ступенях (неизменяемый ``tuple``)."""
+        return self._degrees
+
+    @degrees.setter
+    def degrees(self, value: Iterable[int]) -> None:
+        """Задать прогрессию.
+
+        Raises:
+            ValueError: Пусто, длина > 16 или ступень вне ``0..13``.
+            TypeError: Не последовательность или элемент не ``int``.
+        """
+        if isinstance(value, (str, bytes)):
+            raise TypeError(
+                f"degrees: ожидается последовательность int, получено {value!r}"
+            )
+        try:
+            new = tuple(value)
+        except TypeError:
+            raise TypeError(
+                f"degrees: ожидается последовательность int, получено {value!r}"
+            ) from None
+        if not 1 <= len(new) <= MAX_DEGREES_LEN:
+            raise ValueError(
+                f"degrees: длина должна быть 1..{MAX_DEGREES_LEN}, получено {len(new)} "
+                f"(текущее значение {self._degrees})"
+            )
+        for d in new:
+            if isinstance(d, bool) or not isinstance(d, int):
+                raise TypeError(f"degrees: ступень должна быть int, получено {d!r}")
+            if not 0 <= d < MAX_DEGREE:
+                raise ValueError(
+                    f"degrees: ступень {d} вне диапазона 0..{MAX_DEGREE - 1} "
+                    f"(текущее значение {self._degrees})"
+                )
+        if new != self._degrees:
+            self._degrees = new
+            self._revision += 1
+
+    @property
+    def voicing(self) -> str:
+        """Имя войсинга."""
+        return self._voicing
+
+    @voicing.setter
+    def voicing(self, value: str) -> None:
+        """Задать войсинг.
+
+        Если текущее обращение не помещается в новый войсинг (``inversion >=
+        len``), оно сбрасывается в 0 с записью в лог.
+
+        Raises:
+            HarmonyError: Имени нет в ``Voicing.VOICINGS`` (``""`` допустим
+                только для ``cc_only``-профилей).
+        """
+        if not (value == "" and self.profile.cc_only):
+            Voicing.offsets(value)  # HarmonyError для неизвестного имени
+        if value != self._voicing:
+            self._voicing = value
+            self._revision += 1
+        size = len(Voicing.VOICINGS.get(value, ()))
+        if self._inversion >= max(size, 1):
+            log.info(
+                "MelodicTrack %s: inversion %d не подходит voicing %r -> 0",
+                self.name,
+                self._inversion,
+                value,
+            )
+            self._inversion = 0
+            self._revision += 1
+
+    @property
+    def inversion(self) -> int:
+        """Номер обращения."""
+        return self._inversion
+
+    @inversion.setter
+    def inversion(self, value: int) -> None:
+        """Задать обращение.
+
+        Raises:
+            ValueError: Вне ``0 <= k < len(VOICINGS[voicing])``
+                (для ``cc_only`` с ``voicing=""`` допустим только 0).
+            TypeError: Не ``int``.
+        """
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError(f"inversion: ожидается int, получено {value!r}")
+        size = len(Voicing.VOICINGS.get(self._voicing, ()))
+        if not 0 <= value < max(size, 1):
+            raise ValueError(
+                f"inversion: {value} вне диапазона 0..{max(size, 1) - 1} "
+                f"для voicing {self._voicing!r}"
+            )
+        if value != self._inversion:
+            self._inversion = value
+            self._revision += 1
 
     @property
     def profile_name(self) -> str:
@@ -105,6 +227,12 @@ class MelodicTrack(Track):
     def set_profile(self, profile_name: str) -> None:
         """Сменить профиль дорожки, обновив параметры к дефолтам профиля.
 
+        Сбрасываются к дефолтам нового профиля: ``voicing``, ``octave``, ``gate``
+        (``inversion`` обнуляется, если не помещается в новый voicing).
+        **Не** сбрасываются: ``degrees`` (пользовательская прогрессия, а не
+        свойство профиля), ``mutate``, ``density``, ``sources``.
+        Всегда увеличивает ``revision``.
+
         Аргументы:
             profile_name: Имя профиля из ``PROFILES``.
 
@@ -117,6 +245,7 @@ class MelodicTrack(Track):
         self.voicing = self.profile.default_voicing
         self.octave = self.profile.default_octave
         self.gate = self.profile.default_gate
+        self._revision += 1
         log.debug("MelodicTrack %s: profile -> %s", self.name, profile_name)
 
     # ------------------------------------------------------------------

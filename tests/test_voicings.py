@@ -219,3 +219,67 @@ def test_invert_quartal():
 def test_invert_respects_scale_len():
     # scale_len=5 (пентатоника) — перенос на 5, не 7
     assert Voicing.invert((0, 2, 4), 1, scale_len=5) == (2, 4, 5)
+
+
+# ---------------------------------------------------------------------------
+# Словарь voicing'ов: единая точка чтения
+# ---------------------------------------------------------------------------
+
+
+def test_voicings_single_note_present():
+    """``"1"`` — честное имя для «одна нота»: дефолт sub/bass/lead/texture."""
+    assert Voicing.VOICINGS["1"] == (0,)
+
+
+def test_offsets_known_voicing():
+    assert Voicing.offsets("1-3-5") == (0, 2, 4)
+    assert Voicing.offsets("1") == (0,)
+
+
+def test_offsets_unknown_raises_harmony_error():
+    with pytest.raises(HarmonyError):
+        Voicing.offsets("no-such-voicing")
+
+
+def test_offsets_empty_string_raises_harmony_error():
+    """``""`` — значение cc_only-профиля, а не voicing: аккордов там нет."""
+    with pytest.raises(HarmonyError):
+        Voicing.offsets("")
+
+
+def test_voicing_degrees_rejects_empty_string():
+    h = Harmony("A", "dorian")
+    with pytest.raises(HarmonyError):
+        Voicing.voicing_degrees(h, 0, "")
+
+
+# ---------------------------------------------------------------------------
+# Словарь voicing'ов: единая точка чтения
+# ---------------------------------------------------------------------------
+
+
+def test_voicings_single_note_present():
+    """``"1"`` — честное имя для «одна нота»: дефолт sub/bass/lead/texture."""
+    assert Voicing.VOICINGS["1"] == (0,)
+
+
+def test_offsets_known_voicing():
+    assert Voicing.offsets("1-3-5") == (0, 2, 4)
+    assert Voicing.offsets("1") == (0,)
+
+
+def test_offsets_unknown_raises_harmony_error():
+    with pytest.raises(HarmonyError):
+        Voicing.offsets("no-such-voicing")
+
+
+def test_offsets_empty_string_raises_harmony_error():
+    """``""`` — значение cc_only-профиля, а не voicing: аккордов там нет."""
+    with pytest.raises(HarmonyError):
+        Voicing.offsets("")
+
+
+def test_voicing_degrees_rejects_empty_string():
+    h = Harmony("A", "dorian")
+    with pytest.raises(HarmonyError):
+        Voicing.voicing_degrees(h, 0, "")

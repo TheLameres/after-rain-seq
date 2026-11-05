@@ -66,8 +66,16 @@ class TestPatternLength:
         assert pattern_length(track) == 0.0
 
     def test_empty_degrees_zero(self) -> None:
-        """Пустая прогрессия: 0.0 (дорожка молчит)."""
-        assert pattern_length(_pad([])) == 0.0
+        """Пустая прогрессия запрещена сеттером (A2, §8.2): тишина — это mute.
+
+        Защитная ветка ``pattern_length == 0.0`` остаётся для повреждённого
+        состояния в обход сеттера.
+        """
+        with pytest.raises(ValueError):
+            _pad([])
+        track = _pad()
+        track._degrees = ()
+        assert pattern_length(track) == 0.0
 
 
 class TestChordSource:
@@ -167,5 +175,7 @@ class TestSlicerAndCcOnly:
         assert generate_notes(GenerationContext(track=track)) == []
 
     def test_empty_progression_silent(self) -> None:
-        """Пустая прогрессия — тишина, не падение."""
-        assert generate_notes(GenerationContext(track=_pad([]))) == []
+        """Повреждённое состояние (пустой degrees в обход сеттера) — тишина, не падение."""
+        track = _pad()
+        track._degrees = ()
+        assert generate_notes(GenerationContext(track=track)) == []

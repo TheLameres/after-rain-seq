@@ -96,6 +96,7 @@ class Voicing:
     # ------------------------------------------------------------------
 
     VOICINGS: ClassVar[dict[str, tuple[int, ...]]] = {
+        "1": (0,),
         "1-3-5": (0, 2, 4),
         "1-5": (0, 4),
         "1-3-5-7": (0, 2, 4, 6),
@@ -107,6 +108,30 @@ class Voicing:
         "1-3-7": (0, 2, 6),
         "1-4-5": (0, 3, 4),
     }
+
+    # ------------------------------------------------------------------
+    # Доступ к словарю voicing'ов
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def offsets(voicing: str) -> tuple[int, ...]:
+        """Смещения ступеней для имени voicing'а — единственная точка чтения словаря.
+
+        Одно место вместо ``VOICINGS[name]``: неизвестное имя даёт ``HarmonyError``,
+        а не ``KeyError``. Пустая строка (``""``) — легальное значение профилей
+        ``cc_only``, но не voicing: она тоже отвергается здесь, потому что аккордов
+        у такой дорожки нет и математика аккордов к ней не применима.
+
+        Аргументы:
+            voicing: Имя из :attr:`VOICINGS`.
+
+        Raises:
+            HarmonyError: Если имени нет в словаре (включая ``""``).
+        """
+        try:
+            return Voicing.VOICINGS[voicing]
+        except KeyError:
+            raise HarmonyError(f"Неизвестный voicing: {voicing!r}") from None
 
     # ------------------------------------------------------------------
     # Конверсия 1-based -> 0-based
@@ -176,9 +201,7 @@ class Voicing:
     @staticmethod
     def voicing_degrees(harmony: Harmony, degree: int, voicing: str) -> tuple[int, ...]:
         """Ступени аккорда по имени войсинга (например, ``"1-3-5-7"``)."""
-        if voicing not in Voicing.VOICINGS:
-            raise HarmonyError(f"Неизвестный войсинг: {voicing!r}")
-        offsets = Voicing.VOICINGS[voicing]
+        offsets = Voicing.offsets(voicing)
         return tuple(degree + off for off in offsets)
 
     @staticmethod
