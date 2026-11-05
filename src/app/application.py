@@ -463,15 +463,8 @@ class App:
                 if midi_clock is not None:
                     midi_clock.on_position(timeline.current_time)
                 bpm_now = cm.state.bpm or self._sync_bpm
-                # Мутация до генерации — generate() использует новые параметры.
-                # §4.1: подтянуть mutate из треков (freeze / set_track_mutate
-                # меняют track.mutate, а не копию в MutationEngine).
                 if mutation_engine:
-                    if session:
-                        for track in session.ordered_tracks():
-                            if isinstance(track, MelodicTrack):
-                                mutation_engine.sync_mutate(track.name, track.mutate)
-                    mutation_engine.tick(timeline.current_time, bpm_now)
+                    mutation_engine.tick(timeline.current_time)
                 # C6 шаг 3: фаза графа — источники публикуют ChordEvent,
                 # наследники получают их в outbox (движки читают как окно)
                 if session:
@@ -521,8 +514,6 @@ class App:
         if not mutation_config.enabled or not self._session:
             return
         self._mutation_engine = MutationEngine(
-            min_seconds=mutation_config.mutate_min_seconds,
-            max_seconds=mutation_config.mutate_max_seconds,
             default_mutate=mutation_config.default_mutate,
         )
         for track in self._session.ordered_tracks():
@@ -531,7 +522,6 @@ class App:
                     track_name=track.name,
                     profile_name=track.profile_name,
                     mutate=track.mutate,
-                    bpm=self._sync_bpm,
                     degrees=list(track.degrees),
                     gate=track.gate,
                     track=track,  # §4.4: счётчик живёт на дорожке

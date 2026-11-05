@@ -95,7 +95,7 @@ class TestDegreesReachDrift:
         t.degrees = [5, 5, 5]
         t.commit_pending_degrees()  # граница ступени (B2)
         assert drift.current_degrees == [0, 2, 4]  # до тика — старое
-        me.tick(0.0, 120.0)
+        me.tick(0.0)
         assert drift.current_degrees == [5, 5, 5]
         assert me.get_note_drift("L") is drift  # тот же объект, не пересоздан
 
@@ -104,7 +104,7 @@ class TestDegreesReachDrift:
         me = _engine_with(t)
         t.degrees = [6, 6, 6]
         t.commit_pending_degrees()  # граница ступени (B2)
-        me.tick(0.0, 120.0)
+        me.tick(0.0)
         ctx = GenerationContext(track=t, note_drift=me.get_note_drift("L"))
         assert {n.degree for n in generate_notes(ctx)} == {6}
 
@@ -113,7 +113,7 @@ class TestDegreesReachDrift:
         me = _engine_with(t)
         t.degrees = [4, 1]
         t.commit_pending_degrees()  # граница ступени (B2)
-        me.tick(0.0, 120.0)
+        me.tick(0.0)
         ctx = GenerationContext(track=t, note_drift=me.get_note_drift("T"))
         assert [n.degree for n in generate_notes(ctx)] == [4]
 
@@ -123,26 +123,26 @@ class TestDegreesReachDrift:
         beat = 0.0
         for _ in range(5):
             beat += 1000.0
-            me.tick(beat, 120.0)
+            me.tick(beat)
         t.degrees = [1, 2]
         t.commit_pending_degrees()  # граница ступени (B2)
         for _ in range(20):
             beat += 1000.0
-            me.tick(beat, 120.0)
+            me.tick(beat)
         assert len(me.get_note_drift("L").current_degrees) == 2  # type: ignore[union-attr]
 
     def test_tick_without_edit_does_not_reset_drift(self) -> None:
         """Без правки degrees ресинк не вызывается и накопленный дрейф живёт."""
         t = MelodicTrack(name="L", profile_name="lead", degrees=[0, 2, 4])
         me = _engine_with(t, mutate=1.0)
-        me.tick(0.0, 120.0)
+        me.tick(0.0)
         me.request_mutation("L", cycle_beats=4.0)
-        me.tick(4.0, 120.0)  # ровно одна мутация (count 0 -> всегда drift)
+        me.tick(4.0)  # ровно одна мутация (count 0 -> всегда drift)
         drift = me.get_note_drift("L")
         assert drift is not None
         assert drift.drift_count == 1  # дрейф накоплен
         cur = drift.current_degrees
-        me.tick(5000.0, 120.0)  # без запроса мутации нет, revision не менялась -> ресинка нет
+        me.tick(5000.0)  # без запроса мутации нет, revision не менялась -> ресинка нет
         assert drift.current_degrees == cur
         assert drift.base_degrees == [0, 2, 4]
 
@@ -151,50 +151,21 @@ class TestDegreesReachDrift:
         me = _engine_with(t)
         t.degrees = [1, 2, 3]
         t.commit_pending_degrees()  # граница ступени (B2)
-        me.tick(0.0, 120.0)
+        me.tick(0.0)
         assert me.get_note_drift("P") is None
         assert me.get_param_drift("P") is not None
 
     def test_mutation_count_preserved_on_degrees_edit(self) -> None:
         t = MelodicTrack(name="L", profile_name="lead", degrees=[0, 2, 4])
         me = _engine_with(t, mutate=1.0)
-        me.tick(1000.0, 120.0)
+        me.tick(1000.0)
         count_state = me.get_state("L").mutation_count  # type: ignore[union-attr]
         count_track = t.mutation_count
         t.degrees = [1, 2, 3]
         t.commit_pending_degrees()  # граница ступени (B2)
-        me.tick(0.0, 120.0)  # раньше next_mutation_beat — мутации нет
+        me.tick(0.0)  # раньше next_mutation_beat — мутации нет
         assert me.get_state("L").mutation_count == count_state  # type: ignore[union-attr]
         assert t.mutation_count == count_track
-
-    def test_frozen_track_stays_frozen_after_degrees_edit(self) -> None:
-        t = MelodicTrack(name="L", profile_name="lead", degrees=[0, 2, 4])
-        me = _engine_with(t, mutate=1.0)
-        t.freeze()
-        me.sync_mutate("L", t.mutate)
-        t.degrees = [3, 3, 3]
-        t.commit_pending_degrees()  # граница ступени (B2)
-        me.tick(10_000.0, 120.0)
-        drift = me.get_note_drift("L")
-        assert drift is not None
-        assert drift.current_degrees == [3, 3, 3]  # правка дошла...
-        assert drift.drift_count == 0  # ...но мутации нет
-        assert me.get_state("L").mutate == 0.0  # type: ignore[union-attr]
-        assert t.mutate == 0.0
-
-    def test_edit_on_frozen_track_does_not_unfreeze_over_many_ticks(self) -> None:
-        t = MelodicTrack(name="L", profile_name="lead", degrees=[0, 2, 4])
-        me = _engine_with(t, mutate=1.0)
-        t.freeze()
-        me.sync_mutate("L", t.mutate)
-        t.degrees = [3, 3, 3]
-        t.commit_pending_degrees()  # граница ступени (B2)
-        beat = 0.0
-        for _ in range(30):
-            beat += 1000.0
-            me.sync_mutate("L", t.mutate)
-            me.tick(beat, 120.0)
-        assert me.get_note_drift("L").current_degrees == [3, 3, 3]  # type: ignore[union-attr]
 
     def test_noop_edit_does_not_reset_drift(self) -> None:
         t = MelodicTrack(name="L", profile_name="lead", degrees=[0, 2, 4])
@@ -202,12 +173,12 @@ class TestDegreesReachDrift:
         beat = 0.0
         for _ in range(6):
             beat += 1000.0
-            me.tick(beat, 120.0)
+            me.tick(beat)
         drift = me.get_note_drift("L")
         assert drift is not None
         cur = drift.current_degrees
         t.degrees = [0, 2, 4]  # то же значение — revision не растёт
-        me.tick(beat, 120.0)
+        me.tick(beat)
         assert drift.current_degrees == cur
 
 
@@ -222,7 +193,7 @@ class TestSetProfileRebuildsMechanism:
         me = _engine_with(t)
         assert isinstance(me.get_note_drift("X"), NoteDrift)
         t.set_profile("pad")
-        me.tick(0.0, 120.0)
+        me.tick(0.0)
         assert me.get_note_drift("X") is None
         assert isinstance(me.get_param_drift("X"), ParamDrift)
 
@@ -230,7 +201,7 @@ class TestSetProfileRebuildsMechanism:
         t = MelodicTrack(name="X", profile_name="pad", degrees=[1, 3, 5])
         me = _engine_with(t)
         t.set_profile("lead")
-        me.tick(0.0, 120.0)
+        me.tick(0.0)
         assert me.get_param_drift("X") is None
         nd = me.get_note_drift("X")
         assert nd is not None
@@ -240,7 +211,7 @@ class TestSetProfileRebuildsMechanism:
         t = MelodicTrack(name="X", profile_name="pad")
         me = _engine_with(t)
         t.set_profile("seq")
-        me.tick(0.0, 120.0)
+        me.tick(0.0)
         assert me.get_param_drift("X") is None
         assert me.get_euclidean_drift("X") is not None
 
@@ -248,7 +219,7 @@ class TestSetProfileRebuildsMechanism:
         t = MelodicTrack(name="X", profile_name="lead")
         me = _engine_with(t)
         t.set_profile("pad")
-        me.tick(0.0, 120.0)
+        me.tick(0.0)
         assert me._track_profiles["X"] == "pad"
 
     def test_profile_change_resets_counters_and_logs(
@@ -256,43 +227,22 @@ class TestSetProfileRebuildsMechanism:
     ) -> None:
         t = MelodicTrack(name="X", profile_name="lead", degrees=[0, 2, 4])
         me = _engine_with(t, mutate=1.0)
-        me.tick(0.0, 120.0)
+        me.tick(0.0)
         me.request_mutation("X", cycle_beats=4.0)
-        me.tick(4.0, 120.0)
+        me.tick(4.0)
         assert t.mutation_count >= 1
         t.set_profile("pad")
         with caplog.at_level("INFO", logger="src.session.mutation.mutation_engine"):
-            me.tick(8.0, 120.0)
+            me.tick(8.0)
         assert t.mutation_count == 0
         assert me.get_state("X").mutation_count == 0  # type: ignore[union-attr]
         assert any("механизм пересоздан" in r.message for r in caplog.records)
-
-    def test_profile_change_keeps_mutate_and_schedule(self) -> None:
-        t = MelodicTrack(name="X", profile_name="lead")
-        me = _engine_with(t, mutate=0.7)
-        nxt = me.get_state("X").next_mutation_beat  # type: ignore[union-attr]
-        t.set_profile("pad")
-        me.tick(0.0, 120.0)
-        st = me.get_state("X")
-        assert st is not None
-        assert st.mutate == 0.7
-        assert st.next_mutation_beat == nxt
-
-    def test_frozen_track_stays_frozen_after_set_profile(self) -> None:
-        t = MelodicTrack(name="X", profile_name="lead")
-        me = _engine_with(t, mutate=1.0)
-        t.freeze()
-        me.sync_mutate("X", t.mutate)
-        t.set_profile("pad")
-        me.tick(10_000.0, 120.0)
-        assert me.get_state("X").mutate == 0.0  # type: ignore[union-attr]
-        assert me.get_param_drift("X").drift_count == 0  # type: ignore[union-attr]
 
     def test_generation_after_profile_switch_uses_new_family(self) -> None:
         t = MelodicTrack(name="X", profile_name="lead", degrees=[0, 3])
         me = _engine_with(t)
         t.set_profile("pad")
-        me.tick(0.0, 120.0)
+        me.tick(0.0)
         ctx = GenerationContext(
             track=t,
             note_drift=me.get_note_drift("X"),
@@ -314,14 +264,14 @@ class TestRefreshTrack:
     def test_explicit_degrees_argument(self) -> None:
         t = MelodicTrack(name="L", profile_name="lead", degrees=[0, 2, 4])
         me = _engine_with(t)
-        me.refresh_track("L", degrees=[1, 1], bpm=120.0)
+        me.refresh_track("L", degrees=[1, 1])
         assert me.get_note_drift("L").base_degrees == [1, 1]  # type: ignore[union-attr]
 
     def test_track_without_registered_ref_is_not_synced(self) -> None:
         """Совместимость: register_track без track= работает как раньше."""
         me = MutationEngine()
         me.register_track("L", "lead", degrees=[0, 2, 4])
-        me.tick(0.0, 120.0)
+        me.tick(0.0)
         assert me.get_note_drift("L").base_degrees == [0, 2, 4]  # type: ignore[union-attr]
 
     def test_unregister_clears_revision_state(self) -> None:
@@ -330,16 +280,16 @@ class TestRefreshTrack:
         me.unregister_track("L")
         assert "L" not in me._track_revision
         assert "L" not in me._reg_params
-        me.tick(0.0, 120.0)  # не падает
+        me.tick(0.0)  # не падает
 
     def test_revision_resync_is_idempotent(self) -> None:
         t = MelodicTrack(name="L", profile_name="lead")
         me = _engine_with(t)
         t.degrees = [1, 2]
         t.commit_pending_degrees()  # граница ступени (B2)
-        me.tick(0.0, 120.0)
+        me.tick(0.0)
         d = me.get_note_drift("L")
-        me.tick(0.0, 120.0)
+        me.tick(0.0)
         assert me.get_note_drift("L") is d
 
 
@@ -358,7 +308,7 @@ class TestEndToEnd:
         assert [n.degree for n in eng._pattern()[0]] == [0, 2, 4, 2]
         t.degrees = [5, 5, 5, 5]
         t.commit_pending_degrees()  # граница ступени (B2)
-        me.tick(0.0, 120.0)
+        me.tick(0.0)
         assert [n.degree for n in eng._pattern()[0]] == [5, 5, 5, 5]
 
     def test_pad_pattern_follows_degrees_edit_immediately(self) -> None:

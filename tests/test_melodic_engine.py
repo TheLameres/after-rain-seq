@@ -464,9 +464,9 @@ class TestMutationIntegration:
     """C6 шаг 4: мутация влияет на звук (канал MutationEngine → генерация)."""
 
     def _mutate_now(self, me: MutationEngine, name: str) -> None:
-        me.tick(0.0, bpm=120.0)
+        me.tick(0.0)
         me.request_mutation(name, cycle_beats=4.0)
-        me.tick(4.0, bpm=120.0)
+        me.tick(4.0)
     def test_lead_note_drift_changes_pattern(
         self,
         harmony: Harmony,
@@ -536,29 +536,6 @@ class TestMutationIntegration:
         assert len(after) != len(before) or [n.beat for n in after] != [
             n.beat for n in before
         ]
-
-    def test_freeze_stops_drift(
-        self,
-        harmony: Harmony,
-        event_queue: queue.Queue[TransportEvent],
-    ) -> None:
-        """freeze: мутация остановлена — паттерн не меняется."""
-        track = MelodicTrack(name="Lead 1", profile_name="lead", degrees=[0, 2, 4, 2])
-        me = MutationEngine(rng=random.Random(1))
-        me.register_track(
-            track_name="Lead 1", profile_name="lead", degrees=[0, 2, 4, 2]
-        )
-        engine = MelodicEngine(
-            track, harmony, event_queue, "default", mutation_engine=me
-        )
-        me.freeze_all()
-        before = [n.degree for n in engine._pattern()[0]]
-        state = me.get_state("Lead 1")
-        assert state is not None
-        me.tick(state.next_mutation_beat, bpm=120.0)  # mutate=0 — мутации нет
-        after = [n.degree for n in engine._pattern()[0]]
-        assert after == before
-
 
 class TestMute:
     """§4.6: Track.muted глушит дорожку в движке."""
