@@ -135,13 +135,14 @@ class TestDegreesReachDrift:
         """Без правки degrees ресинк не вызывается и накопленный дрейф живёт."""
         t = MelodicTrack(name="L", profile_name="lead", degrees=[0, 2, 4])
         me = _engine_with(t, mutate=1.0)
-        me.tick(1000.0, 120.0)  # ровно одна мутация (count 0 -> всегда drift)
+        me.tick(0.0, 120.0)
+        me.request_mutation("L", cycle_beats=4.0)
+        me.tick(4.0, 120.0)  # ровно одна мутация (count 0 -> всегда drift)
         drift = me.get_note_drift("L")
         assert drift is not None
         assert drift.drift_count == 1  # дрейф накоплен
         cur = drift.current_degrees
-        me.sync_mutate("L", 0.0)  # заморозка: следующий тик не мутирует
-        me.tick(5000.0, 120.0)  # revision не менялась -> ресинка нет
+        me.tick(5000.0, 120.0)  # без запроса мутации нет, revision не менялась -> ресинка нет
         assert drift.current_degrees == cur
         assert drift.base_degrees == [0, 2, 4]
 
@@ -255,11 +256,13 @@ class TestSetProfileRebuildsMechanism:
     ) -> None:
         t = MelodicTrack(name="X", profile_name="lead", degrees=[0, 2, 4])
         me = _engine_with(t, mutate=1.0)
-        me.tick(1000.0, 120.0)
+        me.tick(0.0, 120.0)
+        me.request_mutation("X", cycle_beats=4.0)
+        me.tick(4.0, 120.0)
         assert t.mutation_count >= 1
         t.set_profile("pad")
         with caplog.at_level("INFO", logger="src.session.mutation.mutation_engine"):
-            me.tick(0.0, 120.0)
+            me.tick(8.0, 120.0)
         assert t.mutation_count == 0
         assert me.get_state("X").mutation_count == 0  # type: ignore[union-attr]
         assert any("механизм пересоздан" in r.message for r in caplog.records)

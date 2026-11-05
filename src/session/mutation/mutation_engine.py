@@ -291,39 +291,8 @@ class MutationEngine:
         Returns:
             Имена дорожек, которые мутировали на этом тике.
         """
-        mutated: list[str] = []
-        # B1: правки degrees/профиля доходят до механизмов даже у замороженных.
         self._sync_revisions(bpm)
-        self._apply_requested(current_beat)
-        for name, state in self._states.items():
-            if state.mutate <= 0.0:
-                continue
-            if current_beat < state.next_mutation_beat:
-                continue
-
-            # Деградация: с вероятностью mutate откатываем
-            if state.mutation_count > 0 and self._rng.random() < state.mutate:
-                changed = self._apply_revert(name)
-                delta = -1
-            else:
-                changed = self._apply_mutation(name)
-                delta = 1
-            # §4.4: счётчик — на дорожке (источник истины, §3.4).
-            if changed:
-                track = self._track_refs.get(name)
-                recorder = getattr(track, "record_mutation", None)
-                if callable(recorder):
-                    recorder(delta)
-
-            new_state = MutationState(
-                mutate=state.mutate,
-                mutation_count=state.mutation_count + 1,
-                next_mutation_beat=self._compute_next_mutation_beat(current_beat, bpm),
-                last_mutation_beat=current_beat,
-            )
-            self._states[name] = new_state
-            mutated.append(name)
-        return mutated
+        return self._apply_requested(current_beat)
 
     def _apply_mutation(self, track_name: str) -> bool:
         """Применить мутацию к дорожке через её механизм.
@@ -403,13 +372,14 @@ class MutationEngine:
     def request_mutation(self, track_name: str, cycle_beats: float) -> None:
         self._requests.append((track_name, cycle_beats))
 
-    def _apply_requested(self, current_beat: float) -> None:
+    def _apply_requested(self, current_beat: float) -> list[str]:
         prev = self._prev_beat
         self._prev_beat = current_beat
         while self._requests:
             name, cycle_beats = self._requests.popleft()
             if name in self._states:
                 self._pending[name] = cycle_beats
+        applied: list[str] = []
         for name, cycle_beats in list(self._pending.items()):
             if name not in self._states:
                 del self._pending[name]
@@ -418,6 +388,8 @@ class MutationEngine:
                 continue
             del self._pending[name]
             self._commit_manual(name, current_beat)
+            applied.append(name)
+        return applied
 
     def _commit_manual(self, track_name: str, beat: float) -> None:
         changed = self._apply_mutation(track_name)

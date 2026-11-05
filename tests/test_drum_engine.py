@@ -141,26 +141,13 @@ def test_all_notes_off():
 # ---------------------------------------------------------------------------
 
 
-def test_tick_triggers_mutation():
-    """tick вызывает maybe_mutate — мутация применяется при времени."""
+def test_tick_does_not_mutate_without_request():
+    """Барабаны без ручного запроса не мутируют по времени (этап 4)."""
     engine, _q, dt = _make_engine()
     dt.mutate = 1.0
-    # current_beat достаточно большой — мутация должна примениться
     engine.tick(current_beat=0.0, bpm=120.0)
     engine.tick(current_beat=1000.0, bpm=120.0)
-    assert dt.mutation_count > 0
-
-
-def test_tick_bpm_sets_mutation_interval():
-    """Темп приходит в tick: при 60 BPM мутация наступает через 8–16 beats."""
-    engine, _q, dt = _make_engine()
-    dt.mutate = 1.0
-    engine.tick(current_beat=0.0, bpm=60.0)
-    engine.tick(current_beat=7.9, bpm=60.0)
     assert dt.mutation_count == 0
-    engine.tick(current_beat=16.1, bpm=60.0)
-    assert dt.mutation_count > 0
-
 
 # ---------------------------------------------------------------------------
 # BPM (C6, R4)

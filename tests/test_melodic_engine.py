@@ -464,11 +464,9 @@ class TestMutationIntegration:
     """C6 шаг 4: мутация влияет на звук (канал MutationEngine → генерация)."""
 
     def _mutate_now(self, me: MutationEngine, name: str) -> None:
-        """Форсировать мутацию дорожки на её следующем mutation beat."""
-        state = me.get_state(name)
-        assert state is not None
-        me.tick(state.next_mutation_beat, bpm=120.0)
-
+        me.tick(0.0, bpm=120.0)
+        me.request_mutation(name, cycle_beats=4.0)
+        me.tick(4.0, bpm=120.0)
     def test_lead_note_drift_changes_pattern(
         self,
         harmony: Harmony,

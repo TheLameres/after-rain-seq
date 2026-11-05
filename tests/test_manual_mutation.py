@@ -97,3 +97,13 @@ def test_tracks_with_different_cycles_fire_independently():
     assert eng.get_state("Lead").mutation_count == 0
     _run(eng, [4.0])
     assert eng.get_state("Lead").mutation_count == 1
+
+
+def test_ten_thousand_ticks_without_request_do_not_change_pattern():
+    eng = MutationEngine(rng=random.Random(9))
+    eng.register_track("Lead", "lead", mutate=1.0, degrees=[0, 2, 4, 2])
+    before = _degrees(eng)
+    for k in range(10_000):
+        eng.tick(k * 0.25, 120.0)
+    assert _degrees(eng) == before
+    assert eng.get_state("Lead").mutation_count == 0

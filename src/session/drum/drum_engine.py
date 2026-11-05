@@ -66,9 +66,8 @@ class DrumEngine:
     def tick(self, current_beat: float, bpm: float) -> int:
         """Один тик drum-движка.
 
-        1. Проверить мутацию (maybe_mutate).
-        2. Сгенерировать события (generate).
-        3. Конвертировать в TransportEvent, положить в очередь.
+        1. Сгенерировать события (generate).
+        2. Конвертировать в TransportEvent, положить в очередь.
 
         Аргументы:
             current_beat: Текущая позиция в тактах.
@@ -81,9 +80,6 @@ class DrumEngine:
         if self._port_label is None:
             return 0
         port = self._port_label
-        # Мутация по времени.
-        self._track.maybe_mutate(current_beat, bpm)
-
         # Генерация.
         events = self._track.generate()
 
