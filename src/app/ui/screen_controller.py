@@ -53,10 +53,12 @@ from src.devices.push2.screens import DEFAULT_SCREENS, scale_root_rows
 from src.devices.push2.track_colors import track_color
 from src.devices.push2.widgets import SLOT_COUNT
 from src.harmony import progressions
+from src.harmony.voicings import VOICING_NAMES
 from src.repl.engine_control import EngineControl
 from src.repl.render import render_text
 from src.repl.status import StatusSnapshot, TrackSummary
 from src.session import PROFILES
+from src.session.model.melodic_track import MAX_OCTAVE
 
 if TYPE_CHECKING:
     from src.config import UiConfig
@@ -679,6 +681,11 @@ class ScreenController:
             )
         elif idx == 5:
             self._cycle_preset(track, increment, now)
+        elif idx == 6 and track.voicing:
+            self._cycle_voicing(track, increment, now)
+        elif idx == 7 and track.voicing and increment:
+            octave = max(0, min(MAX_OCTAVE, track.octave + increment))
+            self._command(self._engine.set_track_octave(track.name, octave), now)
         elif idx == 4:
             self._command(
                 self._engine.set_track_mutate(
@@ -687,6 +694,16 @@ class ScreenController:
                 now,
             )
         # E6..E8 на GEN не назначены (CC-оси переехали на MACRO: E1..E3).
+
+    def _cycle_voicing(self, track: TrackSummary, increment: int, now: float) -> None:
+        """E7 на GEN: следующий/предыдущий voicing по списку (по кругу)."""
+        if increment == 0:
+            return
+        names = VOICING_NAMES
+        pos = names.index(track.voicing) if track.voicing in names else -1
+        step = 1 if increment > 0 else -1
+        nxt = names[(pos + step) % len(names)]
+        self._command(self._engine.set_track_voicing(track.name, nxt), now)
 
     def _cycle_preset(self, track: TrackSummary, increment: int, now: float) -> None:
         """E6 на GEN: переключить пресет прогрессии (правка уйдёт на границу ступени, B2)."""
@@ -1037,6 +1054,7 @@ class ScreenController:
             color=self._track_color_for_selection(snap),
             degrees=track.degrees,
             preset=progressions.name_of(track.degrees),
+            octave=track.octave if track.voicing else None,
         )
 
     def _track_macro(self, snap: StatusSnapshot) -> TrackMacroView | None:

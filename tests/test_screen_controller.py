@@ -164,6 +164,12 @@ class MockEngine(EngineControl):
     def set_track_degrees(self, name: str, degrees) -> EngineResult:
         return self._rec("set_track_degrees", name, tuple(degrees))
 
+    def set_track_voicing(self, name: str, voicing: str) -> EngineResult:
+        return self._rec("set_track_voicing", name, voicing)
+
+    def set_track_octave(self, name: str, octave: int) -> EngineResult:
+        return self._rec("set_track_octave", name, octave)
+
     def set_track_gate(self, name: str, gate: float) -> EngineResult:
         return self._rec("set_track_gate", name, gate)
 

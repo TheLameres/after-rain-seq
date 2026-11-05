@@ -98,6 +98,14 @@ class NoteDrift:
         log.debug("NoteDrift: revert idx=%d %d→%d", idx, old_val, self._base[idx])
         return True
 
+    def snapshot(self) -> tuple[int, ...]:
+        return tuple(self._current)
+
+    def restore(self, state: tuple[int, ...]) -> None:
+        if len(state) != len(self._base):
+            raise ValueError(f"snapshot length {len(state)} != {len(self._base)}")
+        self._current = list(state)
+
     @property
     def current_degrees(self) -> list[int]:
         """Текущие (возможно продугие) ступени — копия списка."""

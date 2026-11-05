@@ -57,6 +57,7 @@ class TrackDetailView:
     color: int = 0  # BGR565 — полоса слева в body
     degrees: tuple[int, ...] = ()  # целевая прогрессия (ступени)
     preset: str = ""  # имя пресета из PROGRESSIONS; пусто — своя
+    octave: int | None = None  # октава melodic; None — не применимо
 
 
 @dataclass(frozen=True)

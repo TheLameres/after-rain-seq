@@ -23,7 +23,7 @@ from src.repl.log_buffer import LogBuffer
 from src.repl.status import StatusSnapshot, TrackSummary
 from src.session.model.drum_track import DrumTrack
 from src.session.model.melodic_profile import PROFILES
-from src.session.model.melodic_track import MelodicTrack
+from src.session.model.melodic_track import MAX_OCTAVE, MelodicTrack
 from src.session.session import Session
 from src.sync.clock_manager import ClockManager
 from src.sync.clock_source import ClockSource
@@ -488,6 +488,18 @@ class AppEngineControl(EngineControl):
         except ValueError as exc:  # HarmonyError наследует ValueError
             return EngineResult.fail(f"track {name!r}: {exc}")
         return EngineResult.ok(f'track "{name}": voicing = {track.voicing}')
+
+    def set_track_octave(self, name: str, octave: int) -> EngineResult:
+        """Задать октаву (E8 на GEN, ``track octave`` в REPL). Диапазон 0..MAX_OCTAVE."""
+        track = self._pitched_track(name)
+        if isinstance(track, EngineResult):
+            return track
+        if not 0 <= octave <= MAX_OCTAVE:
+            return EngineResult.fail(
+                f"track {name!r}: octave must be 0..{MAX_OCTAVE}, got {octave}"
+            )
+        track.octave = octave
+        return EngineResult.ok(f'track "{name}": octave = {octave}')
 
     def set_track_inversion(self, name: str, k: int) -> EngineResult:
         """Задать обращение (C3). ``k`` вне ``0..len(voicing)-1`` — ошибка."""

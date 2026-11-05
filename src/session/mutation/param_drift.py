@@ -99,6 +99,15 @@ class ParamDrift:
         log.debug("ParamDrift: revert %s→%s", name, self._params[name].base)
         return name
 
+    def snapshot(self) -> tuple[tuple[str, float], ...]:
+        return tuple((n, p.current) for n, p in self._params.items())
+
+    def restore(self, state: tuple[tuple[str, float], ...]) -> None:
+        if {n for n, _ in state} != set(self._params):
+            raise ValueError("snapshot params do not match registered params")
+        for name, current in state:
+            self._params[name].current = current
+
     def get(self, name: str) -> float:
         """Текущее значение параметра.
 

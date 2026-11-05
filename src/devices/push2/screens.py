@@ -64,6 +64,8 @@ from src.devices.push2.widgets import (
 )
 from src.harmony.degree_names import format_degrees
 from src.harmony.progressions import PROGRESSIONS
+from src.harmony.voicings import VOICING_NAMES
+from src.session.model.melodic_track import MAX_OCTAVE
 
 __all__ = [
     "BODY_Y0",
@@ -287,7 +289,24 @@ class TrackGenScreen(Screen):
                 index=preset_index(detail.preset),
                 rows=3,
             ),
-        ) + (Empty(),) * (SLOT_COUNT - 6)
+            List(
+                "VOICING (E7)",
+                VOICING_NAMES,
+                index=VOICING_NAMES.index(detail.voicing)
+                if detail.voicing in VOICING_NAMES
+                else 0,
+                rows=3,
+            )
+            if detail.voicing
+            else Empty(),
+            Range(
+                "OCT (E8)",
+                float(detail.octave) if detail.octave is not None else None,
+                0.0,
+                float(MAX_OCTAVE),
+                unit="",
+            ),
+        ) + (Empty(),) * (SLOT_COUNT - 8)
 
         foot: tuple[SlotItem, ...] = (
             Text("PORT", f"> {detail.port}" if detail.port else "—"),

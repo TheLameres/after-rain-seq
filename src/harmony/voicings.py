@@ -269,3 +269,6 @@ class Voicing:
         if triad == Voicing.DIMINISHED and seventh == _SEVENTH_MINOR:
             return Voicing.HALF_DIMINISHED
         return Voicing.UNKNOWN
+
+
+VOICING_NAMES: tuple[str, ...] = tuple(sorted(Voicing.VOICINGS))

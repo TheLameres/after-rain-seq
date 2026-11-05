@@ -164,6 +164,10 @@ class EngineControl(ABC):
         """Задать voicing. По умолчанию не поддерживается."""
         return EngineResult.fail("voicing is not supported by this control")
 
+    def set_track_octave(self, name: str, octave: int) -> EngineResult:
+        """Задать октаву melodic-дорожки. По умолчанию не поддерживается."""
+        return EngineResult.fail("octave is not supported by this control")
+
     def set_track_inversion(self, name: str, k: int) -> EngineResult:
         """Задать обращение. По умолчанию не поддерживается."""
         return EngineResult.fail("inversion is not supported by this control")

@@ -71,6 +71,12 @@ class FloatingEuclidean:
         log.debug("FloatingEuclidean: revert pulses→%d", self._base_pulses)
         return True
 
+    def snapshot(self) -> int:
+        return self._euclidean.pulses
+
+    def restore(self, pulses: int) -> None:
+        self._euclidean.pulses = pulses
+
     @property
     def pattern(self) -> list[int]:
         """Текущий евклидов паттерн (кешированный)."""

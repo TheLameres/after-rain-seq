@@ -212,6 +212,17 @@ class CommandExecutor:
         name, rest = resolved
         return self._feedback(self._control.set_track_voicing(name, rest))
 
+    def _cmd_track_octave(self, command: Command) -> CommandResult:
+        resolved = self._resolve_track_prefix(command.args[0])
+        if resolved is None:
+            return self._no_track(command.args[0])
+        name, rest = resolved
+        try:
+            octave = int(rest)
+        except ValueError:
+            return CommandResult(output=f"error: {rest!r} is not a number", code=1)
+        return self._feedback(self._control.set_track_octave(name, octave))
+
     def _cmd_track_inversion(self, command: Command) -> CommandResult:
         resolved = self._resolve_track_prefix(command.args[0])
         if resolved is None:

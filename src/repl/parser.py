@@ -144,6 +144,16 @@ _SPECS: tuple[CommandSpec, ...] = (
         join_args=True,
     ),
     CommandSpec(
+        name="track octave",
+        domain="track",
+        action="octave",
+        usage="track octave <name> <0..8>",
+        help="Задать октаву дорожки (0..8)",
+        min_args=1,
+        max_args=64,
+        join_args=True,
+    ),
+    CommandSpec(
         name="track inversion",
         domain="track",
         action="inversion",
