@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 
 from src.core.engine_result import EngineResult
 from src.repl.status import StatusSnapshot, TrackSummary
@@ -149,6 +150,27 @@ class EngineControl(ABC):
         Вернуть фидбек или текст ошибки: цикл графа, несуществующая
         дорожка — человекочитаемо, во flash-строку экрана.
         """
+
+    def track_names(self) -> list[str]:
+        """Имена дорожек. По умолчанию — из ``list_tracks()``."""
+        return [t.name for t in self.list_tracks()]
+
+    # C1–C4: не абстрактные, чтобы существующие заглушки продолжали работать.
+    def set_track_degrees(self, name: str, degrees: Sequence[int]) -> EngineResult:
+        """Задать прогрессию ступеней. По умолчанию не поддерживается."""
+        return EngineResult.fail("degrees are not supported by this control")
+
+    def set_track_voicing(self, name: str, voicing: str) -> EngineResult:
+        """Задать voicing. По умолчанию не поддерживается."""
+        return EngineResult.fail("voicing is not supported by this control")
+
+    def set_track_inversion(self, name: str, k: int) -> EngineResult:
+        """Задать обращение. По умолчанию не поддерживается."""
+        return EngineResult.fail("inversion is not supported by this control")
+
+    def set_track_profile(self, name: str, profile_name: str) -> EngineResult:
+        """Сменить профиль дорожки. По умолчанию не поддерживается."""
+        return EngineResult.fail("profile change is not supported by this control")
 
     @abstractmethod
     def set_track_gate(self, name: str, gate: float) -> EngineResult:

@@ -10,6 +10,8 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from src.core.engine_result import EngineResult
+from src.harmony.degree_names import parse_degrees
+from src.harmony.voicings import Voicing
 from src.repl.command import Command, CommandResult
 from src.repl.confirm import DEFAULT_PROMPT, ConfirmPolicy, ConfirmPrompt
 from src.repl.engine_control import EngineControl
@@ -169,6 +171,67 @@ class CommandExecutor:
                 output=f"error: {command.args[1]!r} is not a number", code=1
             )
         return self._feedback(self._control.set_track_channel(command.args[0], channel))
+
+    def _resolve_track_prefix(self, text: str) -> tuple[str, str] | None:
+        """Разделить ``<имя дорожки> <значение>`` по реально существующим дорожкам.
+
+        Имена с пробелами не отличить от значений по форме токенов («Pad 1» и
+        «Pad»), поэтому берётся самое длинное имя из сессии, за которым идёт
+        непустой остаток. Не найдено — ``None``.
+        """
+        names = set(self._control.track_names())
+        tokens = text.split()
+        for i in range(len(tokens) - 1, 0, -1):
+            name = " ".join(tokens[:i])
+            if name in names:
+                return name, " ".join(tokens[i:])
+        return None
+
+    @staticmethod
+    def _no_track(text: str) -> CommandResult:
+        return CommandResult(
+            output=f"error: no track matches {text!r} (quote names with spaces)",
+            code=1,
+        )
+
+    def _cmd_track_degrees(self, command: Command) -> CommandResult:
+        resolved = self._resolve_track_prefix(command.args[0])
+        if resolved is None:
+            return self._no_track(command.args[0])
+        name, rest = resolved
+        try:
+            degrees = parse_degrees(rest)
+        except ValueError as exc:
+            return CommandResult(output=f"error: {exc}", code=1)
+        return self._feedback(self._control.set_track_degrees(name, degrees))
+
+    def _cmd_track_voicing(self, command: Command) -> CommandResult:
+        resolved = self._resolve_track_prefix(command.args[0])
+        if resolved is None:
+            return self._no_track(command.args[0])
+        name, rest = resolved
+        return self._feedback(self._control.set_track_voicing(name, rest))
+
+    def _cmd_track_inversion(self, command: Command) -> CommandResult:
+        resolved = self._resolve_track_prefix(command.args[0])
+        if resolved is None:
+            return self._no_track(command.args[0])
+        name, rest = resolved
+        try:
+            k = int(rest)
+        except ValueError:
+            return CommandResult(output=f"error: {rest!r} is not a number", code=1)
+        return self._feedback(self._control.set_track_inversion(name, k))
+
+    def _cmd_track_profile(self, command: Command) -> CommandResult:
+        resolved = self._resolve_track_prefix(command.args[0])
+        if resolved is None:
+            return self._no_track(command.args[0])
+        name, rest = resolved
+        return self._feedback(self._control.set_track_profile(name, rest))
+
+    def _cmd_voicings(self, command: Command) -> CommandResult:
+        return CommandResult(output="voicings: " + ", ".join(sorted(Voicing.VOICINGS)))
 
     def _cmd_track_delete(self, command: Command) -> CommandResult:
         return self._feedback(self._control.remove_track(command.args[0]))

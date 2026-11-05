@@ -47,7 +47,9 @@ def test_track_constructed_from_profile_has_valid_voicing(profile_name: str) -> 
 def test_unknown_voicing_raises_harmony_error_not_key_error() -> None:
     """Д1: неизвестный voicing — ``HarmonyError``, как и в ``voicing_degrees``."""
     track = MelodicTrack(name="X", profile_name="pad")
-    track.voicing = "nonsense"
+    # Сеттер (A2) не пропустит мусор: эмулируем повреждённое состояние в обход,
+    # чтобы проверить защиту самой математики.
+    track._voicing = "nonsense"
     with pytest.raises(HarmonyError):
         chord_degrees_for(track, 0)
 

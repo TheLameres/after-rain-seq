@@ -10,10 +10,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import replace
 from typing import Protocol
 
 from src.core.engine_result import EngineResult
+from src.harmony.degree_names import format_degrees
 from src.harmony.harmony import Harmony, HarmonyError
 from src.repl.engine_control import EngineControl
 from src.repl.log_buffer import LogBuffer
@@ -395,6 +397,90 @@ class AppEngineControl(EngineControl):
             return EngineResult.fail(f"mutate must be 0..1, got {mutate}")
         track.mutate = float(mutate)
         return EngineResult.ok(f'track "{name}": mutate = {mutate:.2f}')
+
+    def track_names(self) -> list[str]:
+        """Имена дорожек прямо из сессии (снапшот приложения вне запуска пуст)."""
+        session = self._app.session
+        return session.track_names() if session is not None else []
+
+    # ------------------------------------------------------------------
+    # Degrees / voicing / inversion / profile (C1–C4)
+    # ------------------------------------------------------------------
+
+    def _pitched_track(self, name: str) -> MelodicTrack | EngineResult:
+        """Мелодическая дорожка, которая играет ноты (не cc_only), или ошибка."""
+        track = self._melodic_track(name)
+        if isinstance(track, EngineResult):
+            return track
+        if track.profile.cc_only:
+            return EngineResult.fail(f"track {name!r} is cc_only and has no notes")
+        return track
+
+    def set_track_degrees(self, name: str, degrees: Sequence[int]) -> EngineResult:
+        """Задать прогрессию ступеней (C1). Ошибка — ``EngineResult.fail``."""
+        track = self._pitched_track(name)
+        if isinstance(track, EngineResult):
+            return track
+        try:
+            track.degrees = list(degrees)
+        except (ValueError, TypeError) as exc:
+            return EngineResult.fail(f"track {name!r}: {exc}")
+        return EngineResult.ok(
+            f'track "{name}": degrees = {format_degrees(track.degrees)}',
+            degrees=list(track.degrees),
+        )
+
+    def set_track_voicing(self, name: str, voicing: str) -> EngineResult:
+        """Задать voicing (C2). Неизвестное имя — ``EngineResult.fail``."""
+        track = self._pitched_track(name)
+        if isinstance(track, EngineResult):
+            return track
+        try:
+            track.voicing = voicing
+        except ValueError as exc:  # HarmonyError наследует ValueError
+            return EngineResult.fail(f"track {name!r}: {exc}")
+        return EngineResult.ok(f'track "{name}": voicing = {track.voicing}')
+
+    def set_track_inversion(self, name: str, k: int) -> EngineResult:
+        """Задать обращение (C3). ``k`` вне ``0..len(voicing)-1`` — ошибка."""
+        track = self._pitched_track(name)
+        if isinstance(track, EngineResult):
+            return track
+        try:
+            track.inversion = k
+        except (ValueError, TypeError) as exc:
+            return EngineResult.fail(f"track {name!r}: {exc}")
+        return EngineResult.ok(f'track "{name}": inversion = {track.inversion}')
+
+    def set_track_profile(self, name: str, profile_name: str) -> EngineResult:
+        """Сменить профиль (C4).
+
+        Смена семьи внутри «нот» (pad ↔ lead и т. п.) не требует пересборки:
+        ``generate_notes`` читает ``track.profile`` на каждом вызове, а
+        ``MutationEngine`` подтягивает механизм по ``revision`` на следующем тике.
+
+        Переход между cc_only и нотами запрещён: для нотной дорожки
+        ``MelodicEngine`` создаётся только при старте, поэтому дорожка осталась бы
+        без движка (или с лишним). Нужен перезапуск.
+        """
+        track = self._melodic_track(name)
+        if isinstance(track, EngineResult):
+            return track
+        if profile_name not in PROFILES:
+            return EngineResult.fail(
+                f"track {name!r}: unknown profile {profile_name!r}"
+            )
+        if PROFILES[profile_name].cc_only != track.profile.cc_only:
+            return EngineResult.fail(
+                f"track {name!r}: switching between cc_only and note profiles "
+                "needs a restart (no MelodicEngine for this track)"
+            )
+        old = track.profile_name
+        try:
+            track.set_profile(profile_name)
+        except ValueError as exc:
+            return EngineResult.fail(f"track {name!r}: {exc}")
+        return EngineResult.ok(f'track "{name}": profile {old} -> {profile_name}')
 
     def set_track_muted(self, name: str, muted: bool) -> EngineResult:
         """Заглушить/разглушить дорожку (§4.6).
