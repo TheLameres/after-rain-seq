@@ -109,14 +109,30 @@ class ClockManager:
                 log.warning("ClockManager: transport listener %s error: %s", event, exc)
 
     def start(self) -> None:
-        """Start the initial clock source."""
+        """Start the initial clock source.
+
+        Если внешний источник не открывается (нет порта, занят, нет прав),
+        запуск не роняет приложение: причина уходит в ``state.error``, а
+        транспорт поднимается на внутренних часах.
+        """
         if self._running:
             return
         self._running = True
         self._notify_transport("start")
-        self._activate_source(
-            self._config.initial_source, self._config.midi_device_name
-        )
+        try:
+            self._activate_source(
+                self._config.initial_source, self._config.midi_device_name
+            )
+        except (RuntimeError, ValueError) as exc:
+            source = self._config.initial_source
+            log.error("ClockManager: start with %s failed: %s", source.name, exc)
+            if source is ClockSource.INTERNAL:
+                self._running = False
+                raise
+            log.info("ClockManager: falling back to internal clock")
+            self._error = str(exc)
+            self._current = ClockSource.INTERNAL
+            self._activate_source(ClockSource.INTERNAL, None)
         log.info("ClockManager started (source=%s)", self._current.name)
 
     def stop(self) -> None:

@@ -133,12 +133,10 @@ class MutationEngine:
         self._track_revision[track_name] = int(getattr(track, "revision", 0))
         self._build_mechanism(track_name, profile_name, degrees, gate)
 
-        # Инициализируем состояние
-        next_beat = self._compute_next_mutation_beat(0.0, bpm)
+        # Инициализируем состояние (расписание не нужно: мутация ручная)
         self._states[track_name] = MutationState(
             mutate=effective_mutate,
             mutation_count=0,
-            next_mutation_beat=next_beat,
             last_mutation_beat=0.0,
         )
         log.debug("MutationEngine: зарегистрирован %s (%s)", track_name, profile_name)
@@ -240,7 +238,6 @@ class MutationEngine:
             self._states[track_name] = MutationState(
                 mutate=state.mutate,
                 mutation_count=0,
-                next_mutation_beat=state.next_mutation_beat,
                 last_mutation_beat=state.last_mutation_beat,
             )
             return
@@ -254,12 +251,12 @@ class MutationEngine:
         ):
             drift.set_base(degrees)
 
-    def _sync_revisions(self, bpm: float) -> None:
+    def _sync_revisions(self) -> None:
         """Ресинк механизмов с треками по ``revision`` (int-сравнение на дорожку)."""
         for name, track in self._track_refs.items():
             rev = getattr(track, "revision", None)
             if rev is not None and rev != self._track_revision.get(name):
-                self.refresh_track(name, bpm=bpm)
+                self.refresh_track(name)
 
     def unregister_track(self, track_name: str) -> None:
         """Удалить дорожку из мутации (при удалении из сессии).
@@ -279,7 +276,7 @@ class MutationEngine:
     # Тик
     # ------------------------------------------------------------------
 
-    def tick(self, current_beat: float, bpm: float) -> list[str]:
+    def tick(self, current_beat: float, bpm: float | None = None) -> list[str]:
         """Один тик мутации.
 
         Аргументы:
@@ -291,7 +288,7 @@ class MutationEngine:
         Returns:
             Имена дорожек, которые мутировали на этом тике.
         """
-        self._sync_revisions(bpm)
+        self._sync_revisions()
         return self._apply_requested(current_beat)
 
     def _apply_mutation(self, track_name: str) -> bool:
@@ -322,34 +319,15 @@ class MutationEngine:
             return self._param_drifts[track_name].revert_one(self._rng) is not None
         return False
 
-    def _compute_next_mutation_beat(self, from_beat: float, bpm: float) -> float:
-        """Вычислить beat следующей мутации.
+    def restart(self, bpm: float | None = None) -> None:
+        """Перезапуск транспорта с нуля (внешний Start).
 
-        Интервал от времени (секунды), не от тактов — при смене BPM
-        частота мутации сохраняется (план §4.2).
+        Счётчики мутаций и механизмы сохраняются. Ручные запросы и их цели
+        относятся к старой шкале времени и сбрасываются; отсчёт границ
+        начинается заново с первого тика.
 
-        Аргументы:
-            from_beat: Beat, от которого отсчитывать.
-            bpm: Текущий темп.
-
-        Returns:
-            Beat следующей мутации.
-        """
-        seconds = self._rng.uniform(self._min_seconds, self._max_seconds)
-        beats = seconds * bpm / 60.0
-        return from_beat + beats
-
-    # ------------------------------------------------------------------
-    # Freeze / Evolve
-    # ------------------------------------------------------------------
-
-    def restart(self, bpm: float) -> None:
-        """Перезапуск транспорта с нуля: расписание мутаций отсчитывается от 0.
-
-        Счётчики мутаций и механизмы сохраняются; меняется только следующий
-        момент мутации (иначе после перемотки мутации встали бы до старой метки).
-        Ручные запросы и их цели относятся к старой шкале времени и сбрасываются;
-        отсчёт границ начинается заново с первого тика.
+        Args:
+            bpm: Не используется (оставлен для совместимости вызовов).
         """
         self._requests.clear()
         self._pending.clear()
@@ -358,7 +336,6 @@ class MutationEngine:
             self._states[name] = MutationState(
                 mutate=state.mutate,
                 mutation_count=state.mutation_count,
-                next_mutation_beat=self._compute_next_mutation_beat(0.0, bpm),
                 last_mutation_beat=0.0,
             )
 
@@ -368,7 +345,6 @@ class MutationEngine:
             self._states[name] = MutationState(
                 mutate=0.0,
                 mutation_count=state.mutation_count,
-                next_mutation_beat=state.next_mutation_beat,
                 last_mutation_beat=state.last_mutation_beat,
             )
         log.info("MutationEngine: all frozen")
@@ -379,7 +355,6 @@ class MutationEngine:
             self._states[name] = MutationState(
                 mutate=self._default_mutate,
                 mutation_count=state.mutation_count,
-                next_mutation_beat=state.next_mutation_beat,
                 last_mutation_beat=state.last_mutation_beat,
             )
         log.info("MutationEngine: all evolved")
@@ -422,7 +397,6 @@ class MutationEngine:
         self._states[track_name] = MutationState(
             mutate=state.mutate,
             mutation_count=state.mutation_count + 1,
-            next_mutation_beat=state.next_mutation_beat,
             last_mutation_beat=beat,
         )
 
@@ -445,7 +419,6 @@ class MutationEngine:
         self._states[track_name] = MutationState(
             mutate=value,
             mutation_count=state.mutation_count,
-            next_mutation_beat=state.next_mutation_beat,
             last_mutation_beat=state.last_mutation_beat,
         )
 
@@ -462,7 +435,6 @@ class MutationEngine:
         self._states[track_name] = MutationState(
             mutate=value,
             mutation_count=state.mutation_count,
-            next_mutation_beat=state.next_mutation_beat,
             last_mutation_beat=state.last_mutation_beat,
         )
 

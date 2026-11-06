@@ -390,9 +390,21 @@ class App:
             midi_clock.stop()
 
     def _clock_input_name(self, sync_config) -> str | None:
-        """Вход внешнего клока: ``sync.midi_clock_device`` или порт с ``role: clock``."""
-        if sync_config.midi_clock_device:
-            return sync_config.midi_clock_device
+        """Системное имя входа внешнего клока.
+
+        ``sync.midi_clock_device`` может содержать как системное имя
+        (``"IAC Channel 1"``), так и метку порта из ``ports.inputs``
+        (``"clock-in"``). Метка разрешается в системное имя; если порта с такой
+        меткой нет или он не подключён — значение отдаётся как есть, чтобы mido
+        сообщил об ошибке понятным именем.
+        """
+        configured = sync_config.midi_clock_device
+        if configured:
+            if self._port_manager is not None:
+                resolved = self._port_manager.resolve_input(configured)
+                if isinstance(resolved, str) and resolved:
+                    return resolved
+            return configured
         if self._port_manager is None:
             return None
         return self._port_manager.clock_input_name()

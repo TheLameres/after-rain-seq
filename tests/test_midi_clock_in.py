@@ -445,17 +445,36 @@ class TestClockInputSelection:
 
 
 class TestMutationRestart:
-    def test_restart_schedules_from_zero(self) -> None:
+    def test_restart_drops_pending_request(self) -> None:
+        """Запрос, принятый до Start, не срабатывает после перезапуска."""
         from src.session.mutation.mutation_engine import MutationEngine
 
         me = MutationEngine()
         me.register_track("L", "lead", degrees=[0, 2, 4], mutate=1.0)
-        me.tick(5000.0, 120.0)  # продвинуть расписание далеко вперёд
-        me.restart(120.0)
+        me.request_mutation("L", cycle_beats=4.0)
+        me.tick(3.0)  # запрос принят; цель — граница 4.0
+        st = me.get_state("L")
+        assert st is not None and st.mutation_count == 0
+
+        me.restart()  # внешний Start: запрос относится к старой шкале
+
+        for beat in (0.0, 4.0, 8.0, 12.0):
+            me.tick(beat)
         st = me.get_state("L")
         assert st is not None
-        assert st.next_mutation_beat < 100.0
-        assert st.last_mutation_beat == 0.0
+        assert st.mutation_count == 0
+
+    def test_restart_keeps_count(self) -> None:
+        from src.session.mutation.mutation_engine import MutationEngine
+
+        me = MutationEngine()
+        me.register_track("L", "lead", degrees=[0, 2, 4], mutate=1.0)
+        me.request_mutation("L", cycle_beats=4.0)
+        me.tick(0.0)
+        me.tick(4.0)  # мутация сработала
+        assert me.get_state("L").mutation_count == 1  # type: ignore[union-attr]
+        me.restart()
+        assert me.get_state("L").mutation_count == 1  # type: ignore[union-attr]
 
     def test_restart_keeps_count_and_mutate(self) -> None:
         from src.session.mutation.mutation_engine import MutationEngine
@@ -478,3 +497,105 @@ class TestIdleQueue:
         proxy._queue.put_nowait(TickEvent.TICK)  # type: ignore[attr-defined]
         _drain(proxy)
         assert proxy._queue.empty()  # type: ignore[attr-defined]
+
+
+class TestConfiguredNameIsResolved:
+    """sync.midi_clock_device может содержать метку порта, а не имя устройства.
+
+    Симптом из реального запуска: Created MIDI clock input (device='clock-in')
+    и падение mido с unknown port 'clock-in'.
+    """
+
+    def _app_with_ports(self, device, connected: bool = True):
+        from src.app.application import App
+        from src.sync.ports import PortConfig, PortManager, PortsConfig
+
+        class Reg:
+            def list_input_names(self):
+                return ["IAC Channel 1"] if connected else []
+
+            def list_output_names(self):
+                return ["IAC Channel 1"] if connected else []
+
+        pm = PortManager(
+            PortsConfig(
+                inputs=[
+                    PortConfig(label="clock-in", match="IAC Channel 1", role="clock")
+                ]
+            ),
+            Reg(),  # type: ignore[arg-type]
+        )
+        pm.start()
+        app = App(config_path="config.yaml", simulate=True)
+        app._port_manager = pm
+
+        class Sync:
+            midi_clock_device = device
+
+        return app, Sync()
+
+    def test_port_label_is_resolved_to_system_name(self) -> None:
+        app, sync = self._app_with_ports("clock-in")
+        assert app._clock_input_name(sync) == "IAC Channel 1"
+
+    def test_system_name_passes_through(self) -> None:
+        app, sync = self._app_with_ports("IAC Channel 1")
+        assert app._clock_input_name(sync) == "IAC Channel 1"
+
+    def test_unknown_name_passes_through(self) -> None:
+        app, sync = self._app_with_ports("Some Other Device")
+        assert app._clock_input_name(sync) == "Some Other Device"
+
+    def test_unconnected_label_passes_through(self) -> None:
+        app, sync = self._app_with_ports("clock-in", connected=False)
+        assert app._clock_input_name(sync) == "clock-in"
+
+    def test_no_device_uses_clock_role_port(self) -> None:
+        app, sync = self._app_with_ports(None)
+        assert app._clock_input_name(sync) == "IAC Channel 1"
+
+
+class TestStartFailureDoesNotCrash:
+    def test_start_falls_back_to_internal_when_midi_input_fails(self) -> None:
+        from src.sync.clock_manager import ClockManager
+        from src.sync.clock_source import ClockManagerConfig, ClockSource
+
+        cm = ClockManager(
+            MagicMock(),
+            MagicMock(),
+            ClockManagerConfig(
+                initial_source=ClockSource.MIDI,
+                midi_device_name="clock-in",
+                ticks_per_beat=480,
+            ),
+        )
+        activated: list[str] = []
+
+        def fake_activate(source, device):
+            activated.append(source.name)
+            if source is ClockSource.MIDI:
+                raise ValueError("unknown port 'clock-in'")
+
+        cm._activate_source = fake_activate  # type: ignore[method-assign]
+        cm.start()  # не должно бросить
+        assert activated == ["MIDI", "INTERNAL"]
+        assert cm.state.source is ClockSource.INTERNAL
+        assert cm.state.running is True
+        assert cm.state.error is not None and "unknown port" in cm.state.error
+
+    def test_internal_failure_still_raises(self) -> None:
+        from src.sync.clock_manager import ClockManager
+        from src.sync.clock_source import ClockManagerConfig, ClockSource
+
+        cm = ClockManager(
+            MagicMock(),
+            MagicMock(),
+            ClockManagerConfig(initial_source=ClockSource.INTERNAL, ticks_per_beat=480),
+        )
+
+        def boom(source, device):
+            raise ValueError("internal broken")
+
+        cm._activate_source = boom  # type: ignore[method-assign]
+        with pytest.raises(ValueError, match="internal broken"):
+            cm.start()
