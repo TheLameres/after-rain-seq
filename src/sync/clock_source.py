@@ -254,17 +254,19 @@ def create_clock_source(
         return clock
 
     if source is ClockSource.MIDI:
-        from isobar.io.midi.input import MidiInputDevice
+        from src.sync.midi_clock_in import MidiClockInput
 
-        try:
-            device = MidiInputDevice(
-                device_name=config.midi_device_name,
-                clock_target=clock_target,
+        if not config.midi_device_name:
+            raise ValueError(
+                "MIDI clock input is not configured "
+                "(set sync.midi_clock_device or a role: clock input port)"
             )
-        except Exception as exc:
-            raise ValueError(f"Cannot open MIDI input for clock: {exc}") from exc
         log.info("Created MIDI clock input (device=%r)", config.midi_device_name)
-        return device
+        return MidiClockInput(
+            clock_target,
+            config.midi_device_name,
+            config.ticks_per_beat,
+        )
 
     if source is ClockSource.LINK:
         if not link_available():

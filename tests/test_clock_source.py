@@ -104,17 +104,22 @@ class TestCreateClockSource:
         assert source.ticks_per_beat == 480
 
     def test_create_midi_raises_without_device(self) -> None:
-        """Factory raises ValueError when MIDI device cannot be opened."""
+        """Factory refuses MIDI clock without a configured input port."""
+        target = MagicMock()
+        cfg = ClockManagerConfig(midi_device_name=None)
+        with pytest.raises(ValueError, match="not configured"):
+            create_clock_source(ClockSource.MIDI, cfg, target)
+
+    def test_midi_open_failure_raises_on_background(self) -> None:
+        """A missing device fails when the input is opened, with a clear message."""
         target = MagicMock()
         cfg = ClockManagerConfig(midi_device_name="Nonexistent Device XYZ")
+        source = create_clock_source(ClockSource.MIDI, cfg, target)
         with (
-            patch(
-                "isobar.io.midi.input.MidiInputDevice",
-                side_effect=Exception("Device not found"),
-            ),
-            pytest.raises(ValueError, match="Cannot open MIDI input"),
+            patch("mido.open_input", side_effect=OSError("no such port")),
+            pytest.raises(ValueError, match="Cannot open MIDI clock input"),
         ):
-            create_clock_source(ClockSource.MIDI, cfg, target)
+            source.background()
 
     def test_create_link_raises_when_not_available(self) -> None:
         """Factory raises RuntimeError when link package is not installed."""

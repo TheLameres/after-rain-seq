@@ -57,17 +57,18 @@ class TestTickProxyDispatch:
         mock_timeline.reset.assert_called_once()
         proxy.stop_worker()
 
-    def test_start_dispatches_to_timeline(
+    def test_start_resets_timeline_without_starting_clock(
         self, proxy: TickProxy, mock_timeline: MagicMock
     ) -> None:
-        """start() → timeline.start() called."""
+        """start() → timeline.reset(); timeline.start() would spawn a second clock."""
         proxy.start_worker()
         time.sleep(0.05)
 
         proxy.start()
         time.sleep(0.05)
 
-        mock_timeline.start.assert_called_once()
+        mock_timeline.reset.assert_called_once()
+        mock_timeline.start.assert_not_called()
         proxy.stop_worker()
 
     def test_stop_dispatches_to_timeline(

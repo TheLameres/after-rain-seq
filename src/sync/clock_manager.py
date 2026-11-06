@@ -327,12 +327,13 @@ class ClockManager:
         ValueError
             If MIDI device cannot be opened.
         """
-        # Build config with the requested MIDI device
         cfg = ClockManagerConfig(
             initial_source=source,
             initial_bpm=self._config.initial_bpm,
             ticks_per_beat=self._config.ticks_per_beat,
-            midi_device_name=device,
+            midi_device_name=device
+            if device is not None
+            else self._config.midi_device_name,
         )
 
         clock_src = create_clock_source(source, cfg, clock_target=self._proxy)
@@ -347,8 +348,7 @@ class ClockManager:
             # _LinkClockSource has background()
             clock_src.background()
         elif source is ClockSource.MIDI:
-            # MidiInputDevice starts receiving via mido callback automatically
-            pass
+            clock_src.background()
 
     def _stop_current_source(self) -> None:
         """Stop the currently active clock source."""

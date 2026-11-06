@@ -7,14 +7,22 @@ logging:
 
 sync:
   enabled: true
-  clock_source: "internal"
-  midi_clock_device: null
+  clock_source: "midi"
+  midi_clock_device: "clock-in"
   bpm: 120.0
   swing_amount: 0.0
 
 ports:
-  outputs: []
-  inputs: []
+  outputs:
+    - label: "main"          # как дорожки ссылаются на порт
+      match: "IAC Channel 1"     # подстрока имени системного порта
+      role: melodic          # melodic | drum | clock
+      serial: null           # нужен только при неоднозначном match
+      no_automation: false   # true — не слать сюда CC-автоматизацию
+  inputs:
+    - label: "clock-in"
+      match: "IAC Channel 1"     # источник MIDI Clock
+      role: clock
 
 cc_map:
   default:
@@ -44,16 +52,9 @@ devices:
     use_user_midi_port: false
     simulate: false
     display_enabled: true
-    display_fps: 15
-    encoder_banks: []
-    global_encoders:
-      tempo: null
-      swing: null
-      master: null
+    display_fps: 25
 
   lcxl3:
     enabled: true
     midi_in_port_name: "LCXL3 1 DAW Out"
     midi_out_port_name: "LCXL3 1 DAW In"
-    encoder_banks: []
-    faders: []

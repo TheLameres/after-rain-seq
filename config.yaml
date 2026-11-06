@@ -7,8 +7,8 @@ logging:
 
 sync:
   enabled: true
-  clock_source: "internal"
-  midi_clock_device: null
+  clock_source: "midi"
+  midi_clock_device: "clock-in"
   bpm: 120.0
   swing_amount: 0.0
 

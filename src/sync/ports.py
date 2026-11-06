@@ -269,6 +269,13 @@ class PortManager:
             return None
         return record.resolved_name
 
+    def clock_input_name(self) -> str | None:
+        """Системное имя первого входа с ``role: clock`` (или ``None``)."""
+        for pc in self._config.inputs:
+            if pc.role == "clock":
+                return self.resolve_input(pc.label)
+        return None
+
     def resolve_input(self, label: str) -> str | None:
         """Resolve *label* to an actual input port name.
 

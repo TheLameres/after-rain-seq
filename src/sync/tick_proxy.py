@@ -89,7 +89,7 @@ class TickProxy:
         self._enqueue(TickEvent.RESET)
 
     def start(self) -> None:
-        """Enqueue a start event.  Called by clock sources on transport start."""
+        """Enqueue a start event: перезапуск транспорта с позиции 0."""
         self._enqueue(TickEvent.START)
 
     def stop(self) -> None:
@@ -179,6 +179,8 @@ class TickProxy:
             case TickEvent.RESET:
                 self._timeline.reset()
             case TickEvent.START:
-                self._timeline.start()
+                # Внешний Start: позиция с нуля. timeline.start() запустил бы
+                # собственные внутренние часы таймлайна параллельно внешним.
+                self._timeline.reset()
             case TickEvent.STOP:
                 self._timeline.stop()

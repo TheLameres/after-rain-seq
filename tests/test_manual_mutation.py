@@ -117,3 +117,32 @@ def test_ten_thousand_ticks_without_request_do_not_change_pattern():
         eng.tick(k * 0.25, 120.0)
     assert _degrees(eng) == before
     assert eng.get_state("Lead").mutation_count == 0
+
+
+def test_request_after_restart_applies_on_first_boundary():
+    """После внешнего Start таймлайн снова с 0: прежняя позиция не должна задерживать ручную мутацию."""
+    eng = _engine()
+    _run(
+        eng, [i * 0.5 for i in range(40)]
+    )  # таймлайн продвинулся далеко (до beat 19.5)
+    eng.restart(120.0)
+    before = _degrees(eng)
+    eng.request_mutation("Lead", cycle_beats=4.0)
+    _run(eng, [0.0, 0.5, 1.0, 2.0, 3.5])
+    assert _degrees(eng) == before
+    _run(eng, [4.0])
+    assert _degrees(eng) != before
+    assert eng.get_state("Lead").mutation_count == 1
+
+
+def test_pending_request_is_dropped_on_restart():
+    """Запрос, принятый до Start и не применённый, не должен сработать после перезапуска."""
+    eng = _engine()
+    _run(eng, [i * 0.5 for i in range(39)])  # до beat 19.0
+    eng.request_mutation("Lead", cycle_beats=4.0)
+    _run(eng, [19.0])  # запрос принят, цель — граница 20.0 (ещё не наступила)
+    eng.restart(120.0)
+    before = _degrees(eng)
+    _run(eng, [0.0, 0.5, 1.0, 2.0, 3.0, 4.0, 4.5])
+    assert _degrees(eng) == before
+    assert eng.get_state("Lead").mutation_count == 0

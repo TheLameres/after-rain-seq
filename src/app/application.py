@@ -389,6 +389,14 @@ class App:
         elif event == "stop":
             midi_clock.stop()
 
+    def _clock_input_name(self, sync_config) -> str | None:
+        """Вход внешнего клока: ``sync.midi_clock_device`` или порт с ``role: clock``."""
+        if sync_config.midi_clock_device:
+            return sync_config.midi_clock_device
+        if self._port_manager is None:
+            return None
+        return self._port_manager.clock_input_name()
+
     def _init_clock_manager(self, sync_config) -> None:
         """Create TickProxy, ClockManager, CaptureOutput and Transport."""
         import queue as _queue
@@ -426,10 +434,10 @@ class App:
             initial_source=initial_source,
             initial_bpm=sync_config.bpm,
             ticks_per_beat=480,
-            midi_device_name=sync_config.midi_clock_device,
+            midi_device_name=self._clock_input_name(sync_config),
         )
         self._clock_manager = ClockManager(timeline, self._tick_proxy, cm_config)
-        self._midi_clock_device = sync_config.midi_clock_device or ""
+        self._midi_clock_device = self._clock_input_name(sync_config) or ""
 
         # Swing from config
         self._swing_applier = SwingApplier(SwingConfig(amount=sync_config.swing_amount))
@@ -473,11 +481,20 @@ class App:
                     engine.tick(timeline.current_time, bpm_now)
                 for engine in melodic_engines:
                     engine.tick(timeline.current_time)
-            elif event.name == "STOP":
-                # C6: сброс планировщиков — после остановки не доставлять
-                # запланированное «прошлое»
+            elif event.name == "START":
+                # Внешний Start: позиция таймлайна обнуляется (в original_dispatch),
+                # планировщики и расписание мутаций должны отсчитываться заново.
                 for engine in melodic_engines:
                     engine.reset()
+                if mutation_engine is not None:
+                    mutation_engine.restart(cm.state.bpm or self._sync_bpm)
+            elif event.name == "STOP":
+                # C6: сброс планировщиков — после остановки не доставлять
+                # запланированное «прошлое». Тиков после STOP не будет, поэтому
+                # note-off доставляем сразу, а не через очередь.
+                for engine in melodic_engines:
+                    engine.reset()
+                transport.all_notes_off()
             original_dispatch(event)
             if event.name == "TICK":
                 capture.beat = timeline.current_time
