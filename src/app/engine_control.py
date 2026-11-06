@@ -378,6 +378,46 @@ class AppEngineControl(EngineControl):
             track=track.name,
         )
 
+    def track_sources(self) -> dict[str, tuple[str, ...]]:
+        """Источники по дорожкам из сессии (снапшот вне запуска пуст)."""
+        session = self._app.session
+        if session is None:
+            return {}
+        return {t.name: tuple(t.sources) for t in session.ordered_tracks()}
+
+    def _source_warnings(self, name: str, sources: tuple[str, ...]) -> list[str]:
+        """Подписки, которые технически приняты, но на звук не влияют.
+
+        Дорожка без ``reads_source`` (lead, bass) источники игнорирует, а
+        DrumTrack в графе гармонии не участвует и ничего не публикует.
+        Молчаливое принятие выглядит как «настроил, а не работает» — поэтому
+        предупреждаем, но не отказываем: подписку можно включить позже сменой
+        профиля.
+        """
+        session = self._app.session
+        if session is None or not sources:
+            return []
+        warnings: list[str] = []
+        track = session.get_track(name)
+        profile = getattr(track, "profile", None)
+        if profile is not None and not getattr(profile, "reads_source", False):
+            warnings.append(
+                f"профиль {profile.name if hasattr(profile, 'name') else '?'} "
+                f"не читает источники: подписка не влияет на звук"
+            )
+        silent = [
+            src
+            for src in sources
+            if not getattr(
+                getattr(session.get_track(src), "profile", None), "emits_chords", False
+            )
+        ]
+        if silent:
+            warnings.append(
+                "источник не публикует аккорды: " + ", ".join(repr(s) for s in silent)
+            )
+        return warnings
+
     def set_track_sources(self, name: str, *sources: str) -> EngineResult:
         """Назначить источники; цикл графа — человекочитаемый текст."""
         session = self._app.session
@@ -393,7 +433,10 @@ class AppEngineControl(EngineControl):
         except ValueError as exc:
             return EngineResult.fail(f"{exc}")
         joined = "+".join(sources) if sources else "—"
-        return EngineResult.ok(f'track "{name}": sources = {joined}')
+        message = f'track "{name}": sources = {joined}'
+        for warning in self._source_warnings(name, tuple(sources)):
+            message += f"\nnote: {warning}"
+        return EngineResult.ok(message)
 
     def _melodic_track(self, name: str) -> MelodicTrack | EngineResult:
         """MelodicTrack по имени или результат с ошибкой."""
@@ -488,6 +531,45 @@ class AppEngineControl(EngineControl):
         except ValueError as exc:  # HarmonyError наследует ValueError
             return EngineResult.fail(f"track {name!r}: {exc}")
         return EngineResult.ok(f'track "{name}": voicing = {track.voicing}')
+
+    def track_routes(self) -> dict[tuple[str, int], str]:
+        """Карта (порт, канал) → дорожка из сессии (снапшот вне запуска пуст)."""
+        session = self._app.session
+        if session is None:
+            return {}
+        routes: dict[tuple[str, int], str] = {}
+        for track in session.ordered_tracks():
+            port = getattr(track, "port", None)
+            if port:
+                routes.setdefault((port, int(track.channel)), track.name)
+        return routes
+
+    def midi_trace(self, n: int) -> list[object]:
+        """Последние ``n`` исходящих событий (включая отброшенные)."""
+        transport = self._app.transport
+        trace = transport.trace if transport is not None else None
+        return list(trace.recent(n)) if trace is not None else []
+
+    def set_midi_trace(self, enabled: bool) -> EngineResult:
+        """Включить/выключить запись исходящего MIDI для команды ``midi``."""
+        transport = self._app.transport
+        if transport is None:
+            return EngineResult.fail("transport not available (sync.enabled=false)")
+        if enabled:
+            if transport.trace is None:
+                transport.enable_trace()
+            return EngineResult.ok("midi trace enabled")
+        transport.disable_trace()
+        return EngineResult.ok("midi trace disabled")
+
+    def clear_midi_trace(self) -> EngineResult:
+        """Очистить буфер исходящих событий."""
+        transport = self._app.transport
+        trace = transport.trace if transport is not None else None
+        if trace is None:
+            return EngineResult.fail("midi trace is off")
+        trace.clear()
+        return EngineResult.ok("midi trace cleared")
 
     def set_track_octave(self, name: str, octave: int) -> EngineResult:
         """Задать октаву (E8 на GEN, ``track octave`` в REPL). Диапазон 0..MAX_OCTAVE."""

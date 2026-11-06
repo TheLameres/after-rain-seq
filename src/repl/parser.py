@@ -227,6 +227,15 @@ _SPECS: tuple[CommandSpec, ...] = (
         join_args=True,
     ),
     CommandSpec(
+        name="track sources",
+        domain="track",
+        action="sources",
+        usage="track sources <name> [<source> ...]  (имена с пробелами — в кавычках)",
+        help="Источники гармонии: дорожка читает аккорды источников (максимум 2); без источников — снять",
+        min_args=1,
+        max_args=3,
+    ),
+    CommandSpec(
         name="track route",
         domain="track",
         action="route",
@@ -285,6 +294,14 @@ _SPECS: tuple[CommandSpec, ...] = (
         action=None,
         usage="mutations",
         help="Счётчик мутаций",
+    ),
+    CommandSpec(
+        name="midi",
+        domain="midi",
+        action=None,
+        usage="midi [N|on|off|clear]",
+        help="Последние N исходящих MIDI-событий дорожек (default 20); on/off/clear",
+        max_args=1,
     ),
     CommandSpec(
         name="logs",

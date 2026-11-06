@@ -18,6 +18,7 @@ from src.repl.engine_control import EngineControl
 from src.repl.parser import CommandParser, CommandSpec
 from src.repl.render import render_text
 from src.repl.status import StatusSnapshot, TrackSummary
+from src.sync.midi_trace import MidiTraceEntry, format_entry
 
 DEFAULT_LOG_LINES: int = 20
 
@@ -247,6 +248,16 @@ class CommandExecutor:
     def _cmd_track_delete(self, command: Command) -> CommandResult:
         return self._feedback(self._control.remove_track(command.args[0]))
 
+    def _cmd_track_sources(self, command: Command) -> CommandResult:
+        """``track sources <дорожка> [<источник> ...]`` — подписка на гармонию.
+
+        Существование дорожки и источников проверяет фасад: одна точка правды,
+        одинаковые сообщения для REPL и Push 2.
+        """
+        name = command.args[0]
+        sources = command.args[1:]
+        return self._feedback(self._control.set_track_sources(name, *sources))
+
     def _cmd_track_route(self, command: Command) -> CommandResult:
         return self._feedback(
             self._control.route_track(command.args[0], command.args[1])
@@ -271,6 +282,41 @@ class CommandExecutor:
     def _cmd_mutations(self, command: Command) -> CommandResult:
         snap = self._control.get_status()
         return CommandResult(output=f"total mutations: {snap.total_mutations}")
+
+    def _cmd_midi(self, command: Command) -> CommandResult:
+        """``midi`` — поток на выход; ``midi on|off|clear`` — управление записью."""
+        arg = command.args[0].strip().lower() if command.args else ""
+        if arg in ("on", "off"):
+            return self._feedback(self._control.set_midi_trace(arg == "on"))
+        if arg == "clear":
+            return self._feedback(self._control.clear_midi_trace())
+
+        n = DEFAULT_LOG_LINES
+        if arg:
+            try:
+                n = int(arg)
+            except ValueError:
+                return CommandResult(
+                    output=f"error: {arg!r} is not a number (or on/off/clear)", code=1
+                )
+
+        entries: list[MidiTraceEntry] = []
+        for entry in self._control.midi_trace(n):
+            if isinstance(entry, MidiTraceEntry):
+                entries.append(entry)
+        if not entries:
+            return CommandResult(output="no MIDI events recorded (midi on to enable)")
+
+        owners = self._trace_owners()
+        lines = [
+            format_entry(entry, owners.get((entry.port, entry.channel)))
+            for entry in entries
+        ]
+        return CommandResult(output="\n".join(lines))
+
+    def _trace_owners(self) -> dict[tuple[str, int], str]:
+        """Кто играет на паре (порт, канал) — чтобы подписать события дорожкой."""
+        return self._control.track_routes()
 
     def _cmd_logs(self, command: Command) -> CommandResult:
         n = DEFAULT_LOG_LINES

@@ -164,6 +164,26 @@ class EngineControl(ABC):
         """Задать voicing. По умолчанию не поддерживается."""
         return EngineResult.fail("voicing is not supported by this control")
 
+    def track_routes(self) -> dict[tuple[str, int], str]:
+        """Карта ``(порт, канал) → имя дорожки``. По умолчанию из ``list_tracks()``."""
+        return {(t.port, t.channel): t.name for t in self.list_tracks() if t.port}
+
+    def track_sources(self) -> dict[str, tuple[str, ...]]:
+        """Источники по дорожкам. По умолчанию из ``list_tracks()``."""
+        return {t.name: t.sources for t in self.list_tracks()}
+
+    def midi_trace(self, n: int) -> list[object]:
+        """Последние ``n`` исходящих MIDI-событий. По умолчанию пусто."""
+        return []
+
+    def set_midi_trace(self, enabled: bool) -> EngineResult:
+        """Включить/выключить запись исходящих событий."""
+        return EngineResult.fail("midi trace is not supported by this control")
+
+    def clear_midi_trace(self) -> EngineResult:
+        """Очистить буфер исходящих событий."""
+        return EngineResult.fail("midi trace is not supported by this control")
+
     def set_track_octave(self, name: str, octave: int) -> EngineResult:
         """Задать октаву melodic-дорожки. По умолчанию не поддерживается."""
         return EngineResult.fail("octave is not supported by this control")

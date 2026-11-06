@@ -34,6 +34,7 @@ import queue
 from enum import Enum, auto
 from typing import TYPE_CHECKING
 
+from src.sync.midi_trace import DEFAULT_CAPACITY, MidiTrace
 from src.sync.swing import SwingApplier
 from src.sync.transport_event import EventKind, TransportEvent
 
@@ -96,6 +97,8 @@ class Transport:
         self._swing = swing
         self._mode = mode
         self._last_bar_flush: int = -1
+        # Кольцевой буфер для команды REPL `midi`: пишется в _deliver.
+        self._trace: MidiTrace | None = None
         # Свинг сдвигает onset в будущее — ждущие события лежат здесь,
         # отсортированные по моменту отправки (plan §4.2).
         self._held: list[tuple[float, TransportEvent]] = []
@@ -105,6 +108,20 @@ class Transport:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    @property
+    def trace(self) -> MidiTrace | None:
+        """Буфер отправленных событий (``None`` — трассировка выключена)."""
+        return self._trace
+
+    def enable_trace(self, capacity: int = DEFAULT_CAPACITY) -> MidiTrace:
+        """Включить запись исходящих событий и вернуть буфер."""
+        self._trace = MidiTrace(capacity)
+        return self._trace
+
+    def disable_trace(self) -> None:
+        """Выключить запись исходящих событий (освободить буфер)."""
+        self._trace = None
 
     @property
     def mode(self) -> TransportMode:
@@ -257,7 +274,11 @@ class Transport:
                 event.port_label,
                 event.kind.name,
             )
+            if self._trace is not None:
+                self._trace.record(MidiTrace.entry_from(event, delivered=False))
             return
+        if self._trace is not None:
+            self._trace.record(MidiTrace.entry_from(event, delivered=True))
 
         match event.kind:
             case EventKind.NOTE_ON:
