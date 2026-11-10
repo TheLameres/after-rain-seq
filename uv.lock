@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.13"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -17,6 +17,7 @@ dependencies = [
     { name = "pillow" },
     { name = "prompt-toolkit" },
     { name = "pydantic" },
+    { name = "pyliblo3" },
     { name = "python-rtmidi" },
     { name = "pyusb" },
     { name = "pyyaml" },
@@ -46,6 +47,7 @@ requires-dist = [
     { name = "pillow" },
     { name = "prompt-toolkit", specifier = ">=3.0" },
     { name = "pydantic", specifier = ">=2.0" },
+    { name = "pyliblo3", specifier = ">=0.17.0" },
     { name = "python-rtmidi" },
     { name = "pyusb" },
     { name = "pyyaml" },
@@ -756,6 +758,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/49/2e/ced460408999b33da6b31b0021b0f37d329e202d4169aeb164493778f25b/pygments-2.21.0.tar.gz", hash = "sha256:610ca751c9bc2492b38eb9a38a7fbc93edbbb2d7182edaf34e66ae493dee5c8c", size = 5005329, upload-time = "2026-08-17T08:02:48.824Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/71/46/17f022dd3e953bf20a04a028a21ec746d942f8d2af30fa0f124fa0e6a684/pygments-2.21.0-py3-none-any.whl", hash = "sha256:2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9", size = 1250147, upload-time = "2026-08-17T08:02:44.912Z" },
+]
+
+[[package]]
+name = "pyliblo3"
+version = "0.17.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2c/37/833275219e394876da95ab1b77cca54ec317a653f17c5cc4700f2bf67d33/pyliblo3-0.17.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:abb626c98c3f8587087df58f9d8655ce1f109ee27b923ab9a95b79818a854c42", size = 180497, upload-time = "2026-10-07T13:49:02.029Z" },
+    { url = "https://files.pythonhosted.org/packages/33/b7/c48662ab387e531c0b0f280e2332bef00b10fb368e5a25df6e39f136e1f7/pyliblo3-0.17.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:db6ff1594de4017fe87c8cfbffc142ab06223d037ec51c0456192c5d4d5f11ca", size = 671484, upload-time = "2026-10-07T13:48:26.689Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/8d/feaf80e875e31ce25d58feac7db128b388e71729c389856f82b33bff2c70/pyliblo3-0.17.0-cp313-cp313-win_amd64.whl", hash = "sha256:268143bf08f9c4b97dab723f620509b86d813789ae2f430ea0662a707c3a1908", size = 130894, upload-time = "2026-10-07T13:51:22.179Z" },
+    { url = "https://files.pythonhosted.org/packages/74/ec/3f1e3063e2d111de353f6468dff89c285aa26889c5a46920c74f0ddfbb9e/pyliblo3-0.17.0-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:2a1d54f372653634ea4ecb6dfd5b3782f8397aa5ccd2663d420b34dba453bdf1", size = 181349, upload-time = "2026-10-07T13:49:02.946Z" },
+    { url = "https://files.pythonhosted.org/packages/6a/22/83e15d4c59db11a28a03c5e6a9d4d332984a04e576d89c85a019b1792f1e/pyliblo3-0.17.0-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:9c35c51332cbfe596b7a34a1e2e3d4f8b64fd5eb28e6e1e2949a6dabec71291b", size = 666314, upload-time = "2026-10-07T13:48:27.801Z" },
+    { url = "https://files.pythonhosted.org/packages/47/73/8ed689caa2b282969c57115249c726e3f5df7cd33e54f877f16aa2903aa6/pyliblo3-0.17.0-cp314-cp314-win_amd64.whl", hash = "sha256:cf6f810def41d829e57fd7f5fd5e28a376104c0df9d70c8d20118492fda84503", size = 134424, upload-time = "2026-10-07T13:51:23.043Z" },
 ]
 
 [[package]]
