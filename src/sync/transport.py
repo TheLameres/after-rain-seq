@@ -34,6 +34,7 @@ import queue
 from enum import Enum, auto
 from typing import TYPE_CHECKING
 
+from src.sync.capture_recorder import CaptureRecorder
 from src.sync.midi_trace import DEFAULT_CAPACITY, MidiTrace
 from src.sync.swing import SwingApplier
 from src.sync.transport_event import EventKind, TransportEvent
@@ -99,6 +100,9 @@ class Transport:
         self._last_bar_flush: int = -1
         # Кольцевой буфер для команды REPL `midi`: пишется в _deliver.
         self._trace: MidiTrace | None = None
+        # Накопитель захвата SMF (add-capture-smf): атомарная замена ссылки,
+        # пишет транспортный поток, снимок забирает REPL-поток (design §2).
+        self._capture_sink: CaptureRecorder | None = None
         # Свинг сдвигает onset в будущее — ждущие события лежат здесь,
         # отсортированные по моменту отправки (plan §4.2).
         self._held: list[tuple[float, TransportEvent]] = []
@@ -122,6 +126,20 @@ class Transport:
     def disable_trace(self) -> None:
         """Выключить запись исходящих событий (освободить буфер)."""
         self._trace = None
+
+    @property
+    def capture_sink(self) -> CaptureRecorder | None:
+        """Накопитель захвата SMF (``None`` — захват выключен)."""
+        return self._capture_sink
+
+    def set_capture_sink(self, sink: CaptureRecorder | None) -> None:
+        """Прикрепить/снять накопитель захвата (атомарная замена ссылки).
+
+        Старт/стоп идёт из REPL-потока, доставка — из транспортного:
+        ссылка заменяется целиком, горячий путь — одна проверка ``is not
+        None`` без блокировок (design add-capture-smf §2).
+        """
+        self._capture_sink = sink
 
     @property
     def mode(self) -> TransportMode:
@@ -234,18 +252,18 @@ class Transport:
         """
         # Свинг касается только начала ноты.
         if event.kind is not EventKind.NOTE_ON:
-            self._deliver(event, current_beat)
+            self._deliver(event, current_beat, capture_beat=event.beat)
             return None
 
         delay = self._swing.shift(event.beat)
         if delay <= 0.0:
-            self._deliver(event, current_beat)
+            self._deliver(event, current_beat, capture_beat=event.beat)
             return None
 
         deliver_at = event.beat + delay
         if deliver_at <= current_beat + self._EPSILON:
             # Событие уже «прозевало» свой сдвиг — не тянем его в будущее.
-            self._deliver(event, current_beat)
+            self._deliver(event, current_beat, capture_beat=event.beat)
             return None
 
         if len(self._held) >= self._max_held:
@@ -260,13 +278,21 @@ class Transport:
         released = 0
         limit = current_beat + self._EPSILON
         while self._held and self._held[0][0] <= limit:
-            _, event = self._held.pop(0)
-            self._deliver(event, current_beat)
+            deliver_at, event = self._held.pop(0)
+            self._deliver(event, current_beat, capture_beat=deliver_at)
             released += 1
         return released
 
-    def _deliver(self, event: TransportEvent, current_beat: float) -> None:
-        """Deliver a single event to its target port."""
+    def _deliver(
+        self, event: TransportEvent, current_beat: float, capture_beat: float
+    ) -> None:
+        """Deliver a single event to its target port.
+
+        ``capture_beat`` — эффективная позиция события в битах для захвата
+        SMF: для отложенных свингом это момент фактической доставки
+        (``deliver_at``), для немедленных — ``event.beat`` (design
+        add-capture-smf §1).
+        """
         adapter = self._registry.get_output(event.port_label)
         if adapter is None:
             log.debug(
@@ -279,6 +305,20 @@ class Transport:
             return
         if self._trace is not None:
             self._trace.record(MidiTrace.entry_from(event, delivered=True))
+        # Захват SMF: только доставленные note-события, фильтр по виду —
+        # здесь (CC и ALL_NOTES_OFF в файл не попадают, design §1).
+        capture_sink = self._capture_sink
+        if capture_sink is not None and event.kind in (
+            EventKind.NOTE_ON,
+            EventKind.NOTE_OFF,
+        ):
+            capture_sink.record(
+                event.kind,
+                int(event.channel),
+                int(event.note) if event.note is not None else 0,
+                int(event.velocity) if event.velocity is not None else None,
+                capture_beat,
+            )
 
         match event.kind:
             case EventKind.NOTE_ON:
