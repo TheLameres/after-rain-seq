@@ -1,14 +1,14 @@
 """Контракт управления движком для REPL — ABC.
 
-Единственная точка соприкосновения REPL с движком. Методы, возвращающие
-``str``, — пользовательский фидбек: текст результата или текст ошибки
-(с префиксом ``"error:"``, код возврата 1). REPL не должен ронять цикл
-по исключению команды — реализация ловит исключения движка и
-превращает их в текст.
+Единственная точка соприкосновения REPL (и скриптового движка) с
+движком. Методы, возвращающие ``str``, — пользовательский фидбек: текст
+результата или текст ошибки (с префиксом ``"error:"``, код возврата 1).
+REPL не должен ронять цикл по исключению команды — реализация ловит
+исключения движка и превращает их в текст.
 
-Направление зависимостей строго вниз: ``app/engine_control.py`` импортирует
-этот модуль, ``repl/`` не импортирует ``app/`` ни под каким видом
-(даже в ``TYPE_CHECKING``).
+Направление зависимостей строго вниз: ``app/engine_control.py`` и пакет
+``src/scripting/`` (фасад скриптов) импортируют этот модуль; ``repl/``
+не импортирует ``app/`` ни под каким видом (даже в ``TYPE_CHECKING``).
 """
 
 from __future__ import annotations
@@ -102,10 +102,14 @@ class EngineControl(ABC):
         """Сводки дорожек (из снапшота)."""
 
     @abstractmethod
-    def create_track(self, profile: str, channel: int | None = None) -> EngineResult:
+    def create_track(
+        self, profile: str, channel: int | None = None, name: str | None = None
+    ) -> EngineResult:
         """Создать melodic-дорожку профиля. Вернуть фидбек или ошибку.
 
         ``channel=None`` — автоназначение первого свободного канала.
+        ``name=None`` — автоимя счётчика сессии; иначе явное имя
+        (пустое/дубликат — ошибка).
         """
 
     @abstractmethod
@@ -127,21 +131,13 @@ class EngineControl(ABC):
     def unroute_track(self, name: str) -> EngineResult:
         """Отключить дорожку от порта (тишина). Вернуть фидбек или ошибку."""
 
-    @abstractmethod
-    def freeze(self, name: str | None = None) -> EngineResult:
-        """Заморозить все дорожки (без имени) или одну. Вернуть фидбек."""
-
-    @abstractmethod
-    def evolve(self) -> EngineResult:
-        """Разморозить и продолжить эволюцию. Вернуть фидбек."""
-
     # ------------------------------------------------------------------
     # Сессия — расширения D2 (экраны TRACK/TRACKS)
     # ------------------------------------------------------------------
 
     @abstractmethod
-    def create_drum_track(self) -> EngineResult:
-        """Создать drum-дорожку. Вернуть фидбек или текст ошибки (лимиты)."""
+    def create_drum_track(self, name: str | None = None) -> EngineResult:
+        """Создать drum-дорожку. ``name=None`` — автоимя. Вернуть фидбек или ошибку."""
 
     @abstractmethod
     def set_track_sources(self, name: str, *sources: str) -> EngineResult:
@@ -196,6 +192,30 @@ class EngineControl(ABC):
         """Сменить профиль дорожки. По умолчанию не поддерживается."""
         return EngineResult.fail("profile change is not supported by this control")
 
+    def set_drum_pattern(self, name: str, lane: str, pattern: str) -> EngineResult:
+        """Задать паттерн lane'а drum-дорожки строкой-нотацией.
+
+        По умолчанию не поддерживается (прецедент C1–C4: заглушки
+        не ломаются).
+        """
+        return EngineResult.fail("drum pattern is not supported by this control")
+
+    # ------------------------------------------------------------------
+    # Захват SMF (add-capture-smf)
+    # ------------------------------------------------------------------
+
+    def capture_start(self, path: str | None) -> EngineResult:
+        """Начать запись вывода в SMF-файл. По умолчанию не поддерживается."""
+        return EngineResult.fail("capture is not supported by this control")
+
+    def capture_stop(self) -> EngineResult:
+        """Остановить запись и создать SMF-файл. По умолчанию не поддерживается."""
+        return EngineResult.fail("capture is not supported by this control")
+
+    def capture_status(self) -> EngineResult:
+        """Статус захвата. По умолчанию не поддерживается."""
+        return EngineResult.fail("capture is not supported by this control")
+
     @abstractmethod
     def set_track_gate(self, name: str, gate: float) -> EngineResult:
         """Установить гейт melodic-дорожки (0.0–1.0). Вернуть фидбек/ошибку."""
@@ -207,13 +227,33 @@ class EngineControl(ABC):
         Вернуть фидбек или текст ошибки.
         """
 
-    @abstractmethod
-    def set_track_mutate(self, name: str, mutate: float) -> EngineResult:
-        """Установить вероятность мутации (0.0–1.0, макро-ось MUT).
+    # ------------------------------------------------------------------
+    # Ручная мутация (spec «ручная мутация и линейная история», §3–§8)
+    # ------------------------------------------------------------------
 
-        0 = заморожена (как freeze()). Вернуть фидбек или текст ошибки.
+    @abstractmethod
+    def request_mutation(self, name: str | None = None) -> EngineResult:
+        """Запросить шаг мутации (REPL ``evolve``).
+
+        Без имени — все мутируемые дорожки (аналог SHIFT+NEW), с именем —
+        одна. Ожидающая мутация применяется на ближайшей границе цикла
+        дорожки (spec §5).
         """
 
     @abstractmethod
-    def evolve_track(self, name: str) -> EngineResult:
-        """Разморозить одну дорожку (симметрия freeze). Вернуть фидбек."""
+    def undo_mutation(self, name: str) -> EngineResult:
+        """Откатить дорожку на одну версию (REPL ``undo``).
+
+        На корне истории — отказ, состояние не меняется (spec §8).
+        """
+
+    @abstractmethod
+    def recall_version(self, name: str, index: int) -> EngineResult:
+        """Перейти на версию ``index`` (REPL ``recall``, сетка версий §4).
+
+        Несуществующий номер — отказ (spec §8).
+        """
+
+    @abstractmethod
+    def mutation_history(self, name: str) -> EngineResult:
+        """Сводка истории версий дорожки (REPL ``history <name>``)."""

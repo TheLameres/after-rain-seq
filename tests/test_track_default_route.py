@@ -134,7 +134,7 @@ class TestWizardNoneIsExplicitUnroute:
         from tests.test_screen_controller import MELODIC_PROFILES, btn, make_controller
 
         ctl, engine, _ = make_controller()
-        engine.create_track = lambda profile, channel=None: EngineResult.ok(  # type: ignore[method-assign]
+        engine.create_track = lambda profile, channel=None, name=None: EngineResult.ok(  # type: ignore[method-assign]
             "created", track="Stab 1"
         )
         btn(ctl, "Add Track")
@@ -145,3 +145,29 @@ class TestWizardNoneIsExplicitUnroute:
         btn(ctl, "Right")  # route: «—» по умолчанию
         assert engine.called("unroute_track") == [("Stab 1",)]
         assert engine.called("route_track") == []
+
+
+class TestExplicitName:
+    """Явное имя дорожки прокидывается из EngineControl в Session (план G2)."""
+
+    def test_melodic_track_created_with_name(self) -> None:
+        app = _app()
+        result = AppEngineControl(app).create_track("pad", name="Track 1")
+        assert not result.error
+        assert "Track 1" in result.message
+        assert app._session.get_track("Track 1") is not None
+
+    def test_melodic_track_duplicate_name_fails(self) -> None:
+        app = _app()
+        control = AppEngineControl(app)
+        control.create_track("pad", name="Track 1")
+        result = control.create_track("pad", name="Track 1")
+        assert result.error
+        assert "Track 1" in result.message
+
+    def test_drum_track_created_with_name(self) -> None:
+        app = _app()
+        result = AppEngineControl(app).create_drum_track(name="Kick")
+        assert not result.error
+        assert "Kick" in result.message
+        assert app._session.get_track("Kick") is not None

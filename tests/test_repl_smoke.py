@@ -81,7 +81,9 @@ class StubControl(EngineControl):
     def list_tracks(self) -> list[TrackSummary]:
         return list(self.get_status().tracks)
 
-    def create_track(self, profile: str, channel: int | None = None) -> EngineResult:
+    def create_track(
+        self, profile: str, channel: int | None = None, name: str | None = None
+    ) -> EngineResult:
         return EngineResult.ok('created track "Pad 9"', track="Pad 9")
 
     def set_track_channel(self, name: str, channel: int) -> EngineResult:
@@ -96,13 +98,7 @@ class StubControl(EngineControl):
     def unroute_track(self, name: str) -> EngineResult:
         return EngineResult.ok(f'track "{name}" disconnected')
 
-    def freeze(self, name: str | None = None) -> EngineResult:
-        return EngineResult.ok("all tracks frozen")
-
-    def evolve(self) -> EngineResult:
-        return EngineResult.ok("all tracks evolved")
-
-    def create_drum_track(self) -> EngineResult:
+    def create_drum_track(self, name: str | None = None) -> EngineResult:
         return EngineResult.ok("created track", track="Pad 9")
 
     def set_track_sources(self, name: str, *sources: str) -> EngineResult:
@@ -114,11 +110,17 @@ class StubControl(EngineControl):
     def set_track_density(self, name: str, density: float) -> EngineResult:
         return EngineResult.ok("density set")
 
-    def set_track_mutate(self, name: str, mutate: float) -> EngineResult:
-        return EngineResult.ok("mutate set")
+    def request_mutation(self, name: str | None = None) -> EngineResult:
+        return EngineResult.ok("mutation pending")
 
-    def evolve_track(self, name: str) -> EngineResult:
-        return EngineResult.ok("evolved")
+    def undo_mutation(self, name: str) -> EngineResult:
+        return EngineResult.ok("undo ok")
+
+    def recall_version(self, name: str, index: int) -> EngineResult:
+        return EngineResult.ok("recall ok")
+
+    def mutation_history(self, name: str) -> EngineResult:
+        return EngineResult.ok("3 versions, current 2 (root 0)")
 
 
 def run_repl(
@@ -160,14 +162,14 @@ def joined(outputs: list[str]) -> str:
 class TestSmoke:
     def test_commands_execute_and_echo(self, tmp_path):
         outputs, _ = run_repl(
-            tmp_path, "status\nbpm 128\ntracks\nfreeze\nlogs\nexit\n", lambda: None
+            tmp_path, "status\nbpm 128\ntracks\nmutations\nlogs\nexit\n", lambda: None
         )
         text = joined(outputs)
         assert "root: F#" in text
         assert "scale: aeolian" in text
         assert "bpm set to 128.0" in text
         assert "Pad 1" in text
-        assert "all tracks frozen" in text
+        assert "total mutations" in text
         assert "smoke-log-line" in text
 
     def test_exit_calls_on_eof(self, tmp_path):

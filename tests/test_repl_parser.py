@@ -42,7 +42,6 @@ class TestBasicParsing:
         assert parser.parse("ports").error is None
         assert parser.parse("logs").args == ()
         assert parser.parse("logs 5").args == ("5",)
-        assert parser.parse("freeze").args == ()
         assert parser.parse("help").args == ()
 
     def test_flags(self, parser):
@@ -83,10 +82,43 @@ class TestJoinArgs:
         assert cmd.error is None
         assert cmd.args == ("Drum 1",)
 
-    def test_freeze_single_name(self, parser):
-        cmd = parser.parse("freeze Pad 2")
+
+class TestMutationCommands:
+    """Команды ручной мутации (spec §3, §4c, §8)."""
+
+    def test_evolve_no_args(self, parser):
+        cmd = parser.parse("evolve")
         assert cmd.error is None
-        assert cmd.args == ("Pad 2",)
+        assert cmd.args == ()
+
+    def test_evolve_joined_name(self, parser):
+        cmd = parser.parse("evolve Pad 1")
+        assert cmd.error is None
+        assert cmd.args == ("Pad 1",)
+
+    def test_undo_joined_name(self, parser):
+        cmd = parser.parse("undo Drum 1")
+        assert cmd.error is None
+        assert cmd.args == ("Drum 1",)
+
+    def test_undo_requires_name(self, parser):
+        cmd = parser.parse("undo")
+        assert cmd.error is not None
+
+    def test_recall_name_and_version(self, parser):
+        cmd = parser.parse("recall Pad 1 2")
+        assert cmd.error is None
+        assert cmd.args == ("Pad", "1", "2")
+
+    def test_recall_requires_version(self, parser):
+        cmd = parser.parse("recall Pad")
+        assert cmd.error is not None
+
+    def test_history_optional_name(self, parser):
+        assert parser.parse("history").error is None
+        cmd = parser.parse("history Drum 1")
+        assert cmd.error is None
+        assert cmd.args == ("Drum 1",)
 
 
 class TestErrors:
@@ -149,3 +181,47 @@ class TestHelp:
     def test_help_unknown(self, parser):
         text = parser.help_text("frobnicate")
         assert text.startswith("error:")
+
+
+class TestScriptCommands:
+    """Домен script: run/check (план G2, этап 4)."""
+
+    def test_script_run(self, parser):
+        cmd = parser.parse("script run setup.arain.py")
+        assert cmd.error is None
+        assert cmd.name == "script run"
+        assert cmd.domain == "script"
+        assert cmd.action == "run"
+        assert cmd.args == ("setup.arain.py",)
+
+    def test_script_check(self, parser):
+        cmd = parser.parse("script check proposal_script.py")
+        assert cmd.error is None
+        assert cmd.name == "script check"
+        assert cmd.args == ("proposal_script.py",)
+
+    def test_script_run_without_args(self, parser):
+        cmd = parser.parse("script run")
+        assert cmd.error is not None
+        assert "usage: script run <file>" in cmd.usage
+
+    def test_script_check_too_many_args(self, parser):
+        cmd = parser.parse("script check a.py b.py")
+        assert cmd.error is not None
+        assert "usage: script check <file>" in cmd.usage
+
+    def test_script_domain_without_action(self, parser):
+        cmd = parser.parse("script")
+        assert cmd.error is not None
+        assert "missing action" in cmd.error
+
+    def test_script_close_match_suggestion(self, parser):
+        """Опечатка домена: difflib подсказывает script (из parser, бесплатно)."""
+        cmd = parser.parse("scrip run x.py")
+        assert cmd.error is not None
+        assert "script" in cmd.error
+
+    def test_help_lists_script_commands(self, parser):
+        text = parser.help_text()
+        assert "script run <file>" in text
+        assert "script check <file>" in text

@@ -102,20 +102,6 @@ class TestSetTrackDensity:
         assert (ctl.set_track_density("Nope", 0.5)).error
 
 
-class TestEvolveTrack:
-    def test_evolve_one(self) -> None:
-        ctl, session = make_control()
-        pad = session.create_melodic_track("pad")
-        pad.freeze()
-        result = ctl.evolve_track(pad.name)
-        assert "evolved" in result.message
-        assert pad.mutate == 0.5
-
-    def test_unknown_track_is_error(self) -> None:
-        ctl, _session = make_control()
-        assert (ctl.evolve_track("Nope")).error
-
-
 class TestSetTrackMuted:
     """§4.6: mute через фасад."""
 

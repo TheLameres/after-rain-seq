@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 from src.core.engine_result import EngineResult
 from src.harmony.degree_names import parse_degrees
@@ -18,6 +19,7 @@ from src.repl.engine_control import EngineControl
 from src.repl.parser import CommandParser, CommandSpec
 from src.repl.render import render_text
 from src.repl.status import StatusSnapshot, TrackSummary
+from src.scripting.runner import ScriptRunner, format_report
 from src.sync.midi_trace import MidiTraceEntry, format_entry
 
 DEFAULT_LOG_LINES: int = 20
@@ -266,22 +268,56 @@ class CommandExecutor:
     def _cmd_track_unroute(self, command: Command) -> CommandResult:
         return self._feedback(self._control.unroute_track(command.args[0]))
 
+    def _cmd_drum_add(self, command: Command) -> CommandResult:
+        """``drum add [name]`` — создать drum-дорожку (имя опционально)."""
+        name = command.args[0] if command.args else None
+        return self._feedback(self._control.create_drum_track(name))
+
+    def _cmd_drum_pattern(self, command: Command) -> CommandResult:
+        """``drum pattern <track> <lane> [<notation...>]``.
+
+        Два аргумента (без нотации) — очистка lane'а (design §9).
+        Нотация может содержать пробелы и ``|`` — остаточные токены
+        джойнятся пробелом (грамматика их игнорирует).
+        """
+        name, lane = command.args[0], command.args[1]
+        notation = " ".join(command.args[2:])
+        return self._feedback(self._control.set_drum_pattern(name, lane, notation))
+
     def _cmd_root(self, command: Command) -> CommandResult:
         return self._feedback(self._control.set_root(command.args[0]))
 
     def _cmd_scale(self, command: Command) -> CommandResult:
         return self._feedback(self._control.set_scale(command.args[0]))
 
-    def _cmd_freeze(self, command: Command) -> CommandResult:
-        name = command.args[0] if command.args else None
-        return self._feedback(self._control.freeze(name))
-
-    def _cmd_evolve(self, command: Command) -> CommandResult:
-        return self._feedback(self._control.evolve())
-
     def _cmd_mutations(self, command: Command) -> CommandResult:
         snap = self._control.get_status()
         return CommandResult(output=f"total mutations: {snap.total_mutations}")
+
+    def _cmd_evolve(self, command: Command) -> CommandResult:
+        """``evolve`` — все дорожки; ``evolve <name>`` — одна (spec §3)."""
+        name = command.args[0] if command.args else None
+        return self._feedback(self._control.request_mutation(name))
+
+    def _cmd_undo(self, command: Command) -> CommandResult:
+        return self._feedback(self._control.undo_mutation(command.args[0]))
+
+    def _cmd_recall(self, command: Command) -> CommandResult:
+        *name_words, version = command.args
+        try:
+            index = int(version)
+        except ValueError:
+            return CommandResult(
+                output=f"error: {version!r} is not a version number", code=1
+            )
+        return self._feedback(self._control.recall_version(" ".join(name_words), index))
+
+    def _cmd_history(self, command: Command) -> CommandResult:
+        """``history`` — сводка по всем; ``history <name>`` — по одной."""
+        if command.args:
+            return self._feedback(self._control.mutation_history(command.args[0]))
+        snap = self._control.get_status()
+        return CommandResult(output=format_histories(snap))
 
     def _cmd_midi(self, command: Command) -> CommandResult:
         """``midi`` — поток на выход; ``midi on|off|clear`` — управление записью."""
@@ -313,6 +349,38 @@ class CommandExecutor:
             for entry in entries
         ]
         return CommandResult(output="\n".join(lines))
+
+    def _cmd_script_run(self, command: Command) -> CommandResult:
+        """``script run <file>`` — исполнить скрипт (синхронный батч).
+
+        Отчёт раннера: линии фидбека движка + diagnostics/ошибка.
+        Код 1 при diagnostics или ошибке исполнения; REPL живёт.
+        """
+        report = ScriptRunner(self._control).run_file(Path(command.args[0]))
+        code = 1 if report.error is not None or report.diagnostics else 0
+        return CommandResult(output=format_report(report), code=code)
+
+    def _cmd_script_check(self, command: Command) -> CommandResult:
+        """``script check <file>`` — валидация скрипта без исполнения."""
+        diagnostics = ScriptRunner(self._control).check_file(Path(command.args[0]))
+        if not diagnostics:
+            return CommandResult(output=f"script {command.args[0]}: ok")
+        lines = [f"script {command.args[0]}: {len(diagnostics)} diagnostic(s)"]
+        lines.extend(d.format() for d in diagnostics)
+        return CommandResult(output="\n".join(lines), code=1)
+
+    def _cmd_capture(self, command: Command) -> CommandResult:
+        """``capture`` — статус захвата SMF."""
+        return self._feedback(self._control.capture_status())
+
+    def _cmd_capture_start(self, command: Command) -> CommandResult:
+        """``capture start [path]`` — начать запись (путь опционален)."""
+        path = command.args[0] if command.args else None
+        return self._feedback(self._control.capture_start(path))
+
+    def _cmd_capture_stop(self, command: Command) -> CommandResult:
+        """``capture stop`` — остановить запись и создать SMF-файл."""
+        return self._feedback(self._control.capture_stop())
 
     def _trace_owners(self) -> dict[tuple[str, int], str]:
         """Кто играет на паре (порт, канал) — чтобы подписать события дорожкой."""
@@ -404,10 +472,10 @@ def format_tracks(snap: StatusSnapshot) -> str:
     for t in snap.tracks:
         src = ",".join(t.sources) if t.sources else "—"
         port = t.port or "—"
-        flags = " frozen" if t.frozen else ""
+        state = " pending" if t.pending else ""
         lines.append(
             f"  {t.name:<{width}}  {t.kind:<7}  {t.profile:<10}  "
-            f"port {port:<10}  src {src:<10}  mut {t.mutation_count}{flags}"
+            f"port {port:<10}  src {src:<10}  mut {t.mutation_count}{state}"
         )
     return "\n".join(lines)
 
@@ -421,8 +489,23 @@ def format_track(track: TrackSummary) -> str:
         f"port: {track.port or '—'}",
         f"sources: {', '.join(track.sources) if track.sources else '—'}",
         f"mutations: {track.mutation_count}",
-        f"frozen: {'yes' if track.frozen else 'no'}",
     ]
+    return "\n".join(lines)
+
+
+def format_histories(snap: StatusSnapshot) -> str:
+    """Сводка историй версий всех дорожек (команда ``history``)."""
+    if not snap.tracks:
+        return "no tracks"
+    width = max(len(t.name) for t in snap.tracks)
+    lines = []
+    for t in snap.tracks:
+        if t.history_len == 0:
+            versions = "no history"
+        else:
+            versions = f"version {t.mutation_count} ({t.history_len} total)"
+        state = " pending" if t.pending else ""
+        lines.append(f"  {t.name:<{width}}  {versions}{state}")
     return "\n".join(lines)
 
 

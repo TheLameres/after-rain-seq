@@ -39,7 +39,6 @@ class MockControl(EngineControl):
                     profile="pad",
                     sources=(),
                     mutation_count=3,
-                    mutate=0.0,
                 ),
                 TrackSummary(
                     name="Drum 1",
@@ -47,7 +46,6 @@ class MockControl(EngineControl):
                     profile="drum",
                     sources=(),
                     mutation_count=7,
-                    mutate=0.5,
                 ),
             ),
             total_mutations=10,
@@ -103,10 +101,12 @@ class MockControl(EngineControl):
     def list_tracks(self) -> list[TrackSummary]:
         return list(self.get_status().tracks)
 
-    def create_track(self, profile: str, channel: int | None = None) -> EngineResult:
+    def create_track(
+        self, profile: str, channel: int | None = None, name: str | None = None
+    ) -> EngineResult:
         if profile == "bogus":
             return EngineResult.fail("unknown profile")
-        self.calls.append(("create_track", (profile, channel)))
+        self.calls.append(("create_track", (profile, channel, name)))
         return EngineResult.ok('created track "Pad 9"', track="Pad 9")
 
     def set_track_channel(self, name: str, channel: int) -> EngineResult:
@@ -125,15 +125,8 @@ class MockControl(EngineControl):
         self.calls.append(("unroute_track", (name,)))
         return EngineResult.ok(f'track "{name}" disconnected (was "main")')
 
-    def freeze(self, name: str | None = None) -> EngineResult:
-        self.calls.append(("freeze", (name,)))
-        return EngineResult.ok("all tracks frozen" if name is None else f"froze {name}")
-
-    def evolve(self) -> EngineResult:
-        self.calls.append(("evolve", ()))
-        return EngineResult.ok("all tracks evolved")
-
-    def create_drum_track(self) -> EngineResult:
+    def create_drum_track(self, name: str | None = None) -> EngineResult:
+        self.calls.append(("create_drum_track", (name,)))
         return EngineResult.ok("created track", track="Pad 9")
 
     def set_track_sources(self, name: str, *sources: str) -> EngineResult:
@@ -147,12 +140,41 @@ class MockControl(EngineControl):
         self.calls.append(("set_track_density", (name, density)))
         return EngineResult.ok("density set")
 
-    def set_track_mutate(self, name: str, mutate: float) -> EngineResult:
-        self.calls.append(("set_track_mutate", (name, mutate)))
-        return EngineResult.ok("mutate set")
+    def set_track_voicing(self, name: str, voicing: str) -> EngineResult:
+        self.calls.append(("set_track_voicing", (name, voicing)))
+        return EngineResult.ok(f'track "{name}": voicing {voicing}')
 
-    def evolve_track(self, name: str) -> EngineResult:
-        return EngineResult.ok("evolved")
+    def set_track_degrees(self, name: str, degrees) -> EngineResult:
+        self.calls.append(("set_track_degrees", (name, tuple(degrees))))
+        return EngineResult.ok(f'track "{name}": degrees {tuple(degrees)}')
+
+    def set_track_octave(self, name: str, octave: int) -> EngineResult:
+        self.calls.append(("set_track_octave", (name, octave)))
+        return EngineResult.ok(f'track "{name}": octave {octave}')
+
+    def set_track_inversion(self, name: str, k: int) -> EngineResult:
+        self.calls.append(("set_track_inversion", (name, k)))
+        return EngineResult.ok(f'track "{name}": inversion {k}')
+
+    def set_track_profile(self, name: str, profile_name: str) -> EngineResult:
+        self.calls.append(("set_track_profile", (name, profile_name)))
+        return EngineResult.ok(f'track "{name}": profile {profile_name}')
+
+    def request_mutation(self, name: str | None = None) -> EngineResult:
+        self.calls.append(("request_mutation", (name,)))
+        return EngineResult.ok("mutation pending")
+
+    def undo_mutation(self, name: str) -> EngineResult:
+        self.calls.append(("undo_mutation", (name,)))
+        return EngineResult.ok("undo ok")
+
+    def recall_version(self, name: str, index: int) -> EngineResult:
+        self.calls.append(("recall_version", (name, index)))
+        return EngineResult.ok("recall ok")
+
+    def mutation_history(self, name: str) -> EngineResult:
+        self.calls.append(("mutation_history", (name,)))
+        return EngineResult.ok("3 versions, current 2 (root 0)")
 
 
 @pytest.fixture
@@ -185,7 +207,6 @@ class TestStatusCommands:
         result = ex.execute("tracks")
         assert result.code == 0
         assert "Pad 1" in result.output
-        assert "frozen" in result.output
 
     def test_track_show(self, ex):
         result = ex.execute("track show Pad 1")
@@ -288,20 +309,20 @@ class TestControlCommands:
     def test_track_add(self, ex, control):
         result = ex.execute("track add pad")
         assert result.code == 0
-        assert ("create_track", ("pad", None)) in control.calls
+        assert ("create_track", ("pad", None, None)) in control.calls
 
     def test_track_add_with_channel(self, ex, control):
         """Явный канал пробрасывается в движок."""
         result = ex.execute("track add pad 3")
         assert result.code == 0
-        assert ("create_track", ("pad", 3)) in control.calls
+        assert ("create_track", ("pad", 3, None)) in control.calls
 
     def test_track_add_bad_channel(self, ex, control):
         """Не-числовой канал — ошибка без вызова движка."""
         result = ex.execute("track add pad abc")
         assert result.code == 1
         assert "not a number" in result.output
-        assert ("create_track", ("pad", None)) not in control.calls
+        assert ("create_track", ("pad", None, None)) not in control.calls
 
     def test_track_channel(self, ex, control):
         """Смена канала дорожки в рантайме."""
@@ -324,25 +345,50 @@ class TestControlCommands:
         assert ex.execute("scale aeolian").code == 0
         assert ("set_scale", ("aeolian",)) in control.calls
 
-    def test_freeze_all(self, ex, control):
-        result = ex.execute("freeze")
-        assert result.code == 0
-        assert ("freeze", (None,)) in control.calls
-
-    def test_freeze_one(self, ex, control):
-        result = ex.execute("freeze Pad 1")
-        assert result.code == 0
-        assert ("freeze", ("Pad 1",)) in control.calls
-
-    def test_evolve(self, ex, control):
-        result = ex.execute("evolve")
-        assert result.code == 0
-        assert ("evolve", ()) in control.calls
-
     def test_start(self, ex, control):
         result = ex.execute("start")
         assert result.code == 0
         assert ("start_transport", ()) in control.calls
+
+
+class TestMutationCommands:
+    """Ручная мутация через REPL (spec §3, §4c, §8)."""
+
+    def test_evolve_all(self, ex, control):
+        result = ex.execute("evolve")
+        assert result.code == 0
+        assert ("request_mutation", (None,)) in control.calls
+
+    def test_evolve_one(self, ex, control):
+        result = ex.execute("evolve Pad 1")
+        assert result.code == 0
+        assert ("request_mutation", ("Pad 1",)) in control.calls
+
+    def test_undo(self, ex, control):
+        result = ex.execute("undo Drum 1")
+        assert result.code == 0
+        assert ("undo_mutation", ("Drum 1",)) in control.calls
+
+    def test_undo_requires_name(self, ex):
+        assert ex.execute("undo").code == 1
+
+    def test_recall(self, ex, control):
+        result = ex.execute("recall Pad 1 2")
+        assert result.code == 0
+        assert ("recall_version", ("Pad 1", 2)) in control.calls
+
+    def test_recall_version_not_a_number(self, ex):
+        result = ex.execute("recall Pad x")
+        assert result.code == 1
+        assert "not a version number" in result.output
+
+    def test_recall_requires_two_args(self, ex):
+        assert ex.execute("recall Pad").code == 1
+
+    def test_history_one(self, ex, control):
+        result = ex.execute("history Pad 1")
+        assert result.code == 0
+        assert ("mutation_history", ("Pad 1",)) in control.calls
 
 
 class TestConfirmations:
@@ -448,3 +494,67 @@ class TestErrorsAndExit:
         assert result.code == 0
         assert result.output == ""
         assert control.calls == []
+
+
+class TestScriptCommands:
+    """Команды script run/check (план G2, этап 4)."""
+
+    def test_script_check_valid(self, ex, tmp_path):
+        path = tmp_path / "valid.arain.py"
+        path.write_text("session.start()\n", encoding="utf-8")
+        result = ex.execute(f"script check {path}")
+        assert result.code == 0
+        assert result.output == f"script {path}: ok"
+
+    def test_script_check_invalid(self, ex, tmp_path):
+        path = tmp_path / "bad.arain.py"
+        path.write_text(
+            "TrackProposal(profile_name='pad', voicing='1-2-3-5-7')\n",
+            encoding="utf-8",
+        )
+        result = ex.execute(f"script check {path}")
+        assert result.code == 1
+        assert f"{path}:1:" in result.output
+        assert "unknown voicing" in result.output
+
+    def test_script_run_valid(self, ex, control, tmp_path):
+        path = tmp_path / "run.arain.py"
+        path.write_text("session.start()\nsession.set_bpm(120)\n", encoding="utf-8")
+        result = ex.execute(f"script run {path}")
+        assert result.code == 0
+        assert "transport started" in result.output
+        assert "bpm set to 120.0" in result.output
+        assert "ok: 2 call(s)" in result.output
+
+    def test_script_run_failed_repl_lives(self, ex, control, tmp_path):
+        path = tmp_path / "fail.arain.py"
+        path.write_text(
+            "session.set_bpm(9999)\n", encoding="utf-8"  # движок вернёт ошибку
+        )
+        result = ex.execute(f"script run {path}")
+        assert result.code == 1
+        assert "error:" in result.output
+        # REPL живёт: следующая команда работает.
+        follow = ex.execute("status")
+        assert follow.code == 0
+
+    def test_script_run_without_args(self, ex):
+        result = ex.execute("script run")
+        assert result.code == 1
+        assert "usage: script run <file>" in result.output
+
+    def test_script_check_missing_file(self, ex, tmp_path):
+        result = ex.execute(f"script check {tmp_path / 'nope.arain.py'}")
+        assert result.code == 1
+        assert "file not found" in result.output
+
+    def test_script_run_canonical_fixture(self, ex, control, tmp_path):
+        """Canonical-пример proposal_script.py исполняется end-to-end (мок)."""
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parent.parent
+        result = ex.execute(f"script run {root / 'proposal_script.py'}")
+        assert result.code == 0
+        assert 'created track "Pad 9"' in result.output
+        assert "transport started" in result.output
+        assert "ok: 11 call(s)" in result.output

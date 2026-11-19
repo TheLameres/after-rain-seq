@@ -4,8 +4,9 @@
 (``домен → {действие}``). Динамические части дергают
 :class:`EngineControl` при TAB-нажатии (дешёво: снапшот уже в памяти):
 
-    - ``track show/delete/freeze <TAB>`` → имена из ``list_tracks()``
-    - ``freeze <TAB>`` → имена дорожек (опциональный аргумент)
+    - ``track show/delete <TAB>`` → имена из ``list_tracks()``
+    - ``evolve/undo/recall/history <TAB>`` → имена дорожек
+    - ``drum pattern <TAB>`` → имена дорожек, следующий токен → lane'ы
     - ``scale <TAB>`` → 8 ладов (провайдер, см. main.py)
     - ``root <TAB>`` → 12 нот
     - ``track add <TAB>`` → профили (провайдер, см. main.py)
@@ -57,7 +58,8 @@ class ReplCompleter(Completer):
         control: Контракт движка (имена дорожек берутся из снапшота).
         providers: Ключ → callable. Поддерживаемые ключи:
             ``"track"`` (имена дорожек), ``"scale"`` (лады),
-            ``"profile"`` (профили). Необязательны — отсутствующие
+            ``"profile"`` (профили), ``"lane"`` (имена lane'ов
+            drum-машины). Необязательны — отсутствующие
             ключи дают пустое дополнение.
     """
 
@@ -105,8 +107,15 @@ class ReplCompleter(Completer):
             )
         ):
             return self._track_names()
-        if path == ["freeze"]:
-            return self._track_names()  # freeze [name] — необязательный аргумент
+        if path in (["evolve"], ["undo"], ["recall"], ["history"]):
+            # имя дорожки — необязательный/первый аргумент ручной мутации
+            return self._track_names()
+        if path == ["drum", "pattern"]:
+            # drum pattern <TAB> — имена дорожек (как у track delete)
+            return self._track_names()
+        if len(path) >= 3 and path[0] == "drum" and path[1] == "pattern":
+            # drum pattern <track> <TAB> — имена lane'ов (провайдер "lane")
+            return self._provider("lane")
         if path == ["track", "add"]:
             return self._provider("profile")
         if path == ["scale"]:
