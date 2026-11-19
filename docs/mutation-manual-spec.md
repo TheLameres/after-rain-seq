@@ -1,6 +1,22 @@
 # Спецификация: ручная мутация и линейная история
 
-Статус: **согласовано по Q1–Q4 и уточнениям (мигание pending, колонки по дорожкам с пагинацией, без freeze)**. Реализация не начата.
+Статус: **реализовано (фазы A–D, 2026-11-17)**. Тесты: 1830 passed. Принятые
+в ходе реализации решения:
+
+- **Drum-мутация** — обёртка в `MutationEngine` (подход MECH_DRUM): шаг
+  `DrumTrack._apply_mutation` (1–2 изменения по лейнам), граница цикла
+  `steps / 4`; счётчик и история ведутся движком.
+- **Сетка версий** — отдельный экран-таб `VERSIONS` на кнопке `Duplicate`
+  (CC 88), а не вкладка TRACK.
+- **Параметр `mutate` удалён полностью** — из треков, `MutationState`,
+  `MutationEngine`, конфигов (config.yaml, `DEFAULT_CONFIG_YAML`), REPL,
+  экранов и макро-оси MUT (E5 на GEN свободен).
+- **Правки degrees (`set_base`) и смена профиля сбрасывают историю** —
+  новая истина; счётчик и курсор обнуляются, корень — свежий снимок.
+- **`restart()` не чистит pending** (§4c): ожидающая мутация переживает
+  stop/start и применяется на первой границе цикла после запуска.
+- **LED падов** — note-on канал 0 (статика) / канал 14 (мигание pending);
+  мигание дисплея (строки TRACKS) — отдельная задача, пока текстовый флаг.
 
 ## 1. Что меняется
 
@@ -165,3 +181,23 @@ Freeze не нужен: мутация только ручная, и «замо�
   шаг дрейфа идёт от восстановленного значения.
 - Вытеснение: 257-я версия удаляет вторую, корень остаётся.
 - Пад N (36+) = переход на версию N; сетка показывает последние 64 при переполнении.
+
+## 11. Где реализовано
+
+| Что | Где |
+|---|---|
+| История версий (стек, лимит 256, корень не вытесняется) | `src/session/model/version_history.py` |
+| Снимки версий (DTO) | `src/session/mutation/track_version.py` |
+| Координатор: request/undo/recall/history, MECH_DRUM-ветка | `src/session/mutation/mutation_engine.py` |
+| `pending`-флаг дорожки, счётчик = курсор | `src/session/model/track.py` |
+| Снимок/восстановление паттернов лейнов | `src/session/model/drum_track.py` |
+| Фасад: request_mutation/undo_mutation/recall_version/mutation_history | `src/app/engine_control.py`, `src/repl/engine_control.py` |
+| REPL-команды `evolve/undo/recall/history` | `src/repl/parser.py`, `executor.py`, `completer.py` |
+| Push 2: NEW (CC 87), UNDO (CC 119), экран VERSIONS (Duplicate CC 88) | `src/app/ui/screen_controller.py`, `src/devices/push2/screens.py` |
+| LED падов: статика ch 0 / мигание ch 14 | `src/devices/push2/push2_device.py` (`set_pad_leds`) |
+| Навигация §4b (Up/Down — версии, Shift — страницы) | `screen_controller.py` (`_versions_scroll`, `_handle_pad`) |
+| Флаг PENDING в TRACKS | `src/devices/display_state.py` (`TrackRowView.pending`), `screens.py` |
+| Тесты | `tests/test_track_history.py`, `tests/test_engine_control_mutation.py`, `tests/test_manual_mutation.py` |
+
+Отложено: мигание дисплея (строки TRACKS / ячейки VERSIONS) — сейчас
+статичный текстовый флаг; ручной прогон на железе (LED ch 14, сетка падов).

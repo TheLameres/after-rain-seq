@@ -5,7 +5,7 @@ from src.session.mutation.mutation_engine import MutationEngine
 
 def _engine() -> MutationEngine:
     eng = MutationEngine(rng=random.Random(1))
-    eng.register_track("Lead", "lead", mutate=0.0, degrees=[0, 2, 4, 2])
+    eng.register_track("Lead", "lead", degrees=[0, 2, 4, 2])
     return eng
 
 
@@ -88,7 +88,7 @@ def test_backwards_beat_does_not_fire():
 
 def test_tracks_with_different_cycles_fire_independently():
     eng = _engine()
-    eng.register_track("Lead2", "lead", mutate=0.0, degrees=[0, 2, 4, 2])
+    eng.register_track("Lead2", "lead", degrees=[0, 2, 4, 2])
     _run(eng, [0.0, 1.0])
     eng.request_mutation("Lead", cycle_beats=4.0)
     eng.request_mutation("Lead2", cycle_beats=2.0)
@@ -101,20 +101,10 @@ def test_tracks_with_different_cycles_fire_independently():
 
 def test_ten_thousand_ticks_without_request_do_not_change_pattern():
     eng = MutationEngine(rng=random.Random(9))
-    eng.register_track("Lead", "lead", mutate=1.0, degrees=[0, 2, 4, 2])
+    eng.register_track("Lead", "lead", degrees=[0, 2, 4, 2])
     before = _degrees(eng)
     for k in range(10_000):
         eng.tick(k * 0.25)
-    assert _degrees(eng) == before
-    assert eng.get_state("Lead").mutation_count == 0
-
-
-def test_ten_thousand_ticks_without_request_do_not_change_pattern():
-    eng = MutationEngine(rng=random.Random(9))
-    eng.register_track("Lead", "lead", mutate=1.0, degrees=[0, 2, 4, 2])
-    before = _degrees(eng)
-    for k in range(10_000):
-        eng.tick(k * 0.25, 120.0)
     assert _degrees(eng) == before
     assert eng.get_state("Lead").mutation_count == 0
 
@@ -125,7 +115,7 @@ def test_request_after_restart_applies_on_first_boundary():
     _run(
         eng, [i * 0.5 for i in range(40)]
     )  # таймлайн продвинулся далеко (до beat 19.5)
-    eng.restart(120.0)
+    eng.restart()
     before = _degrees(eng)
     eng.request_mutation("Lead", cycle_beats=4.0)
     _run(eng, [0.0, 0.5, 1.0, 2.0, 3.5])
@@ -135,14 +125,22 @@ def test_request_after_restart_applies_on_first_boundary():
     assert eng.get_state("Lead").mutation_count == 1
 
 
-def test_pending_request_is_dropped_on_restart():
-    """Запрос, принятый до Start и не применённый, не должен сработать после перезапуска."""
+def test_pending_request_survives_restart():
+    """Spec §4c: pending переживает stop/start.
+
+    Stop не сбрасывает ожидающую мутацию; после Start она применяется
+    на первой границе цикла дорожки (не в момент самого start).
+    """
     eng = _engine()
     _run(eng, [i * 0.5 for i in range(39)])  # до beat 19.0
     eng.request_mutation("Lead", cycle_beats=4.0)
-    _run(eng, [19.0])  # запрос принят, цель — граница 20.0 (ещё не наступила)
-    eng.restart(120.0)
+    _run(eng, [19.0])  # запрос принят, граница 20.0 ещё не наступила
+    eng.restart()  # стоп + старт: таймлайн с нуля, pending жив
     before = _degrees(eng)
-    _run(eng, [0.0, 0.5, 1.0, 2.0, 3.0, 4.0, 4.5])
+    # Тики после start: до границы 4.0 паттерн не меняется
+    _run(eng, [0.0, 0.5, 1.0, 2.0, 3.5])
     assert _degrees(eng) == before
-    assert eng.get_state("Lead").mutation_count == 0
+    # Первая граница цикла после start применяет ожидающую мутацию
+    _run(eng, [4.0])
+    assert _degrees(eng) != before
+    assert eng.get_state("Lead").mutation_count == 1

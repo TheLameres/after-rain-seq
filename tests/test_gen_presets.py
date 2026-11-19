@@ -89,7 +89,6 @@ class TestGenEncoderE6:
         ctl, engine = _gen((make_track("A"),), CLASSIC)
         enc(ctl, 6, inc=1)
         assert engine.called("set_track_gate") == []
-        assert engine.called("set_track_mutate") == []
 
 
 class TestGenScreenShowsPreset:
@@ -104,7 +103,6 @@ class TestGenScreenShowsPreset:
             gate=0.9,
             voicing="1-3-5",
             density=None,
-            mutate=0.5,
             degrees=degrees,
             preset=progressions.name_of(degrees),
         )

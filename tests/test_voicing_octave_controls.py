@@ -186,7 +186,6 @@ class TestGenLayout:
             gate=0.9,
             voicing=voicing,
             density=None,
-            mutate=0.5,
             degrees=(0, 3),
             preset="",
             octave=octave,

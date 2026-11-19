@@ -1,4 +1,4 @@
-"""Мутация и эволюция — дрейф параметров мелодических дорожек.
+"""Мутация — дрейф параметров, только по явному действию пользователя.
 
 Три механизма мутации (план §6, Фаза 3):
 
@@ -10,19 +10,14 @@
   (для ``pad``, ``atmos``, ``bass``, ``sub``).
 
 Координатор — :class:`MutationEngine`. Один на сессию, выбирает механизм
-по профилю дорожки, управляет интервалом мутации (8–16 секунд),
-деградацией к базовому рисунку, freeze/evolve.
-
-Мутация **clock-independent** (план §5.1): оперирует beats, пересчёт
-секунды → beats через ``bpm``.
+по профилю дорожки. Автономного таймера нет: мутация применяется по
+явному запросу (``request_mutation``) на ближайшей границе цикла дорожки.
 """
 
 from src.session.mutation.drift_tables import (
     MECH_EUCLIDEAN,
     MECH_NOTE,
     MECH_PARAM,
-    MUTATE_MAX_SECONDS,
-    MUTATE_MIN_SECONDS,
     PARAM_DRIFT_PARAMS,
     PROFILE_MECHANISM,
 )
@@ -32,16 +27,17 @@ from src.session.mutation.mutation_engine import MutationEngine
 from src.session.mutation.mutation_state import MutationState
 from src.session.mutation.note_drift import NoteDrift
 from src.session.mutation.param_drift import ParamDrift
+from src.session.mutation.track_version import DrumVersion, MelodicVersion
 
 __all__ = [
     "MECH_EUCLIDEAN",
     "MECH_NOTE",
     "MECH_PARAM",
-    "MUTATE_MAX_SECONDS",
-    "MUTATE_MIN_SECONDS",
     "PARAM_DRIFT_PARAMS",
     "PROFILE_MECHANISM",
+    "DrumVersion",
     "FloatingEuclidean",
+    "MelodicVersion",
     "MutationConfig",
     "MutationEngine",
     "MutationState",

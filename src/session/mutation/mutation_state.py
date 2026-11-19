@@ -10,11 +10,9 @@ class MutationState:
     """Немутируемый снимок состояния мутации дорожки.
 
     Атрибуты:
-        mutate: Вероятность мутации 0.0–1.0 (0 = заморожено).
-        mutation_count: Изменений с последней заморозки.
+        mutation_count: Счётчик применённых изменений паттерна.
         last_mutation_beat: Beat последней мутации.
     """
 
-    mutate: float
     mutation_count: int
     last_mutation_beat: float

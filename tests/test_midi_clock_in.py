@@ -445,30 +445,38 @@ class TestClockInputSelection:
 
 
 class TestMutationRestart:
-    def test_restart_drops_pending_request(self) -> None:
-        """Запрос, принятый до Start, не срабатывает после перезапуска."""
+    def test_restart_pending_request_applies_after_start(self) -> None:
+        """Spec §4c: pending переживает stop/start.
+
+        Ожидающий запрос не привязан к старой шкале времени: после
+        перезапуска он применяется на первой границе цикла дорожки.
+        """
         from src.session.mutation.mutation_engine import MutationEngine
 
         me = MutationEngine()
-        me.register_track("L", "lead", degrees=[0, 2, 4], mutate=1.0)
+        me.register_track("L", "lead", degrees=[0, 2, 4])
+        me.tick(0.0)
         me.request_mutation("L", cycle_beats=4.0)
-        me.tick(3.0)  # запрос принят; цель — граница 4.0
+        me.tick(3.0)  # запрос принят; граница 4.0 ещё не наступила
         st = me.get_state("L")
         assert st is not None and st.mutation_count == 0
 
-        me.restart()  # внешний Start: запрос относится к старой шкале
+        me.restart()  # внешний Start: таймлайн с нуля, pending жив
 
-        for beat in (0.0, 4.0, 8.0, 12.0):
+        for beat in (0.0, 2.0, 3.5):
             me.tick(beat)
         st = me.get_state("L")
+        assert st is not None and st.mutation_count == 0
+        me.tick(4.0)  # первая граница цикла после start
+        st = me.get_state("L")
         assert st is not None
-        assert st.mutation_count == 0
+        assert st.mutation_count == 1
 
     def test_restart_keeps_count(self) -> None:
         from src.session.mutation.mutation_engine import MutationEngine
 
         me = MutationEngine()
-        me.register_track("L", "lead", degrees=[0, 2, 4], mutate=1.0)
+        me.register_track("L", "lead", degrees=[0, 2, 4])
         me.request_mutation("L", cycle_beats=4.0)
         me.tick(0.0)
         me.tick(4.0)  # мутация сработала
@@ -476,19 +484,17 @@ class TestMutationRestart:
         me.restart()
         assert me.get_state("L").mutation_count == 1  # type: ignore[union-attr]
 
-    def test_restart_keeps_count_and_mutate(self) -> None:
+    def test_restart_keeps_count(self) -> None:
         from src.session.mutation.mutation_engine import MutationEngine
 
         me = MutationEngine()
-        me.register_track("L", "lead", degrees=[0, 2, 4], mutate=0.7)
-        me.tick(1000.0, 120.0)
-        before = me.get_state("L")
-        assert before is not None
-        me.restart(120.0)
-        after = me.get_state("L")
-        assert after is not None
-        assert after.mutation_count == before.mutation_count
-        assert after.mutate == 0.7
+        me.register_track("L", "lead", degrees=[0, 2, 4])
+        me.request_mutation("L", cycle_beats=4.0)
+        me.tick(0.0)
+        me.tick(4.0)  # мутация сработала
+        assert me.get_state("L").mutation_count == 1  # type: ignore[union-attr]
+        me.restart()
+        assert me.get_state("L").mutation_count == 1  # type: ignore[union-attr]
 
 
 class TestIdleQueue:

@@ -11,8 +11,6 @@ from src.session.mutation.drift_tables import (
     MECH_EUCLIDEAN,
     MECH_NOTE,
     MECH_PARAM,
-    MUTATE_MAX_SECONDS,
-    MUTATE_MIN_SECONDS,
     PROFILE_MECHANISM,
 )
 from src.session.mutation.floating_euclidean import FloatingEuclidean
@@ -32,33 +30,28 @@ class TestMutationState:
     def test_frozen(self) -> None:
         """Нельзя изменить поле после создания."""
         state = MutationState(
-            mutate=0.5,
             mutation_count=0,
             last_mutation_beat=0.0,
         )
         with pytest.raises(AttributeError):
-            state.mutate = 0.0  # type: ignore[misc]
+            state.mutation_count = 5  # type: ignore[misc]
 
     def test_fields(self) -> None:
         """Поля корректны при создании."""
         state = MutationState(
-            mutate=0.3,
             mutation_count=5,
             last_mutation_beat=16.0,
         )
-        assert state.mutate == 0.3
         assert state.mutation_count == 5
         assert state.last_mutation_beat == 16.0
 
     def test_equality(self) -> None:
         """Два одинаковых состояния равны."""
         s1 = MutationState(
-            mutate=0.5,
             mutation_count=0,
             last_mutation_beat=0.0,
         )
         s2 = MutationState(
-            mutate=0.5,
             mutation_count=0,
             last_mutation_beat=0.0,
         )
@@ -383,7 +376,7 @@ class TestMutationEngine:
         """Ручной запрос применяется на границе цикла дорожки."""
         rng = random.Random(42)
         engine = MutationEngine(rng=rng)
-        engine.register_track("Lead 1", "lead", mutate=1.0, degrees=[0, 2, 4])
+        engine.register_track("Lead 1", "lead", degrees=[0, 2, 4])
         engine.tick(0.0)
         engine.request_mutation("Lead 1", cycle_beats=4.0)
         result = engine.tick(4.0)
@@ -391,57 +384,50 @@ class TestMutationEngine:
         new_state = engine.get_state("Lead 1")
         assert new_state is not None
         assert new_state.mutation_count == 1
+
     def test_total_mutation_count(self) -> None:
         """total_mutation_count суммирует все дорожки."""
         rng = random.Random(42)
         engine = MutationEngine(rng=rng)
-        engine.register_track("Lead 1", "lead", mutate=1.0, degrees=[0, 2, 4])
-        engine.register_track("Pad 1", "pad", mutate=1.0)
+        engine.register_track("Lead 1", "lead", degrees=[0, 2, 4])
+        engine.register_track("Pad 1", "pad")
         assert engine.total_mutation_count == 0
         engine.tick(0.0)
         engine.request_mutation("Lead 1", cycle_beats=4.0)
         engine.request_mutation("Pad 1", cycle_beats=4.0)
         engine.tick(4.0)
         assert engine.total_mutation_count == 2
+
     def test_get_state_returns_mutation_state(self) -> None:
         """get_state возвращает MutationState."""
         engine = MutationEngine()
-        engine.register_track("Lead 1", "lead", mutate=0.7, degrees=[0, 2, 4])
+        engine.register_track("Lead 1", "lead", degrees=[0, 2, 4])
         state = engine.get_state("Lead 1")
         assert state is not None
         assert isinstance(state, MutationState)
-        assert state.mutate == 0.7
+        assert state.mutation_count == 0
 
     def test_get_state_unknown_returns_none(self) -> None:
         """get_state для неизвестной дорожки — None."""
         engine = MutationEngine()
         assert engine.get_state("Unknown") is None
 
-    def test_set_mutate(self) -> None:
-        """set_mutate обновляет значение mutate."""
-        engine = MutationEngine()
-        engine.register_track("Lead 1", "lead", degrees=[0, 2, 4])
-        engine.set_mutate("Lead 1", 0.0)
-        state = engine.get_state("Lead 1")
-        assert state is not None
-        assert state.mutate == 0.0
-
     def test_unregister_track(self) -> None:
         """unregister_track удаляет дорожку из мутации."""
         rng = random.Random(42)
         engine = MutationEngine(rng=rng)
-        engine.register_track("Lead 1", "lead", mutate=1.0, degrees=[0, 2, 4])
+        engine.register_track("Lead 1", "lead", degrees=[0, 2, 4])
         engine.unregister_track("Lead 1")
         assert engine.get_state("Lead 1") is None
         assert engine.get_note_drift("Lead 1") is None
         result = engine.tick(1000.0)
         assert result == []
 
-    def test_degradation_reverts(self) -> None:
-        """Деградация: с вероятностью mutate откатываем одно изменение."""
+    def test_two_requests_apply_two_mutations(self) -> None:
+        """Два явных запроса на разных границах цикла — две мутации."""
         rng = random.Random(1)
         engine = MutationEngine(rng=rng)
-        engine.register_track("Lead 1", "lead", mutate=0.9, degrees=[0, 2, 4])
+        engine.register_track("Lead 1", "lead", degrees=[0, 2, 4])
         engine.tick(0.0)
         for k in (1, 2):
             engine.request_mutation("Lead 1", cycle_beats=4.0)
@@ -449,30 +435,19 @@ class TestMutationEngine:
         state = engine.get_state("Lead 1")
         assert state is not None
         assert state.mutation_count == 2
+
     def test_tick_returns_mutated_names(self) -> None:
         """tick возвращает имена дорожек, на которых мутация применена на этом тике."""
         rng = random.Random(42)
         engine = MutationEngine(rng=rng)
-        engine.register_track("Lead 1", "lead", mutate=1.0, degrees=[0, 2, 4])
-        engine.register_track("Pad 1", "pad", mutate=1.0)
+        engine.register_track("Lead 1", "lead", degrees=[0, 2, 4])
+        engine.register_track("Pad 1", "pad")
         engine.tick(0.0)
         engine.request_mutation("Lead 1", cycle_beats=4.0)
         engine.request_mutation("Pad 1", cycle_beats=4.0)
         result = engine.tick(4.0)
         assert "Lead 1" in result
         assert "Pad 1" in result
-    def test_constants(self) -> None:
-        """Константы интервала мутации соответствуют плану."""
-        assert MUTATE_MIN_SECONDS == 8.0
-        assert MUTATE_MAX_SECONDS == 16.0
-
-    def test_default_mutate(self) -> None:
-        """default_mutate используется при регистрации без явного mutate."""
-        engine = MutationEngine(default_mutate=0.3)
-        engine.register_track("Lead 1", "lead", degrees=[0, 2, 4])
-        state = engine.get_state("Lead 1")
-        assert state is not None
-        assert state.mutate == 0.3
 
     def test_registered_tracks(self) -> None:
         """registered_tracks возвращает имена всех дорожек."""
@@ -545,9 +520,7 @@ class TestMutationCountOnTrack:
 
         track = MelodicTrack(name="Lead 1", profile_name="lead")
         engine = MutationEngine(rng=random.Random(7))
-        engine.register_track(
-            "Lead 1", "lead", mutate=0.3, degrees=[0, 2, 4], track=track
-        )
+        engine.register_track("Lead 1", "lead", degrees=[0, 2, 4], track=track)
         engine.tick(0.0)
         for k in range(1, 21):
             engine.tick(k * 4.0 - 0.5)

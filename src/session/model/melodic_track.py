@@ -45,8 +45,6 @@ class MelodicTrack(Track):
             длина 1..16, каждая ступень ``0 <= d < 14``). Неизменяема на месте.
         revision: Счётчик правок degrees/voicing/inversion/profile. Производные
             (NoteDrift, кэши) сравнивают свою копию с текущей и ресинхронизируются.
-        mutate: Вероятность мутации 0.0–1.0 (0 = заморожено).
-        bpm: Текущий темп (для пересчёта интервала мутации).
 
     Поведение по профилю:
         - ``emits_chords=True`` (pad, atmos): публикует ``ChordEvent``
@@ -89,7 +87,6 @@ class MelodicTrack(Track):
         if degrees is not None:
             self._degrees = self._validate_degrees(degrees)
         self._revision = 0  # конструирование — не правка
-        self.mutate: float = 0.5
         self.density: float = 1.0
         """Плотность паттерна 0.0–1.0 (D2): 1.0 — базовый рисунок,
         0.0 — ~25% плотности (не тишина). Читается генераторами live."""
@@ -247,15 +244,6 @@ class MelodicTrack(Track):
         """
         return pattern_length(self)
 
-    def freeze(self) -> None:
-        """Заморозить мутацию (no-op без MutationEngine).
-
-        Устанавливает ``mutate = 0``. MutationEngine, если подключён,
-        синхронизируется через ``get_state()``.
-        """
-        self.mutate = 0.0
-        self.reset_mutation_count()
-
     # ------------------------------------------------------------------
     # Смена профиля
     # ------------------------------------------------------------------
@@ -266,7 +254,7 @@ class MelodicTrack(Track):
         Сбрасываются к дефолтам нового профиля: ``voicing``, ``octave``, ``gate``
         (``inversion`` обнуляется, если не помещается в новый voicing).
         **Не** сбрасываются: ``degrees`` (пользовательская прогрессия, а не
-        свойство профиля), ``mutate``, ``density``, ``sources``.
+        свойство профиля), ``density``, ``sources``.
         Всегда увеличивает ``revision``.
 
         Аргументы:

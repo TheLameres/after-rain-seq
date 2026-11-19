@@ -249,7 +249,6 @@ def test_drum_track_creation():
     assert dt.lanes[15].note == 51
     assert dt.lanes[15].name == "Conga"
     assert dt.steps == 16
-    assert dt.mutate == 0.5
     assert dt.square == 1
     assert dt.accent_level == 127
 
@@ -363,6 +362,46 @@ def test_session_create_drum():
     dt = s.create_drum_track()
     assert dt.name == "Drum 1"
     assert isinstance(dt, DrumTrack)
+
+
+def test_session_explicit_name():
+    """Явное имя дорожки используется как есть."""
+    s = Session()
+    t = s.create_melodic_track(profile="pad", name="Rise")
+    assert t.name == "Rise"
+    assert s.get_track("Rise") is t
+
+
+def test_session_explicit_name_duplicate_rejected():
+    """Дубликат явного имени — ValueError."""
+    s = Session()
+    s.create_melodic_track(profile="pad", name="Rise")
+    with pytest.raises(ValueError, match="уже существует"):
+        s.create_melodic_track(profile="pad", name="Rise")
+
+
+def test_session_explicit_name_does_not_move_counter():
+    """Явное имя не сдвигает автосчётчик: следующий автономер «Pad 1»."""
+    s = Session()
+    s.create_melodic_track(profile="pad", name="Rise")
+    auto = s.create_melodic_track(profile="pad")
+    assert auto.name == "Pad 1"
+
+
+def test_session_explicit_name_empty_rejected():
+    """Пустое явное имя — ValueError."""
+    s = Session()
+    with pytest.raises(ValueError, match="пустым"):
+        s.create_melodic_track(profile="pad", name="   ")
+
+
+def test_session_drum_explicit_name():
+    """Явное имя drum-дорожки: создаётся, дубликат отклоняется."""
+    s = Session()
+    dt = s.create_drum_track(name="Kick")
+    assert dt.name == "Kick"
+    with pytest.raises(ValueError, match="уже существует"):
+        s.create_drum_track(name="Kick")
 
 
 def test_session_max_tracks():
@@ -615,57 +654,10 @@ def test_dub_techno_preset():
 # ---------------------------------------------------------------------------
 
 
-def test_melodic_track_mutate_default():
-    """MelodicTrack имеет mutate=0.5 по умолчанию."""
-    t = MelodicTrack(name="Pad 1", profile_name="pad")
-    assert t.mutate == 0.5
-
-
 def test_melodic_track_mutation_count_default():
     """mutation_count = 0 без MutationEngine."""
     t = MelodicTrack(name="Pad 1", profile_name="pad")
     assert t.mutation_count == 0
-
-
-def test_melodic_track_freeze():
-    """freeze() устанавливает mutate=0."""
-    t = MelodicTrack(name="Pad 1", profile_name="pad")
-    t.freeze()
-    assert t.mutate == 0.0
-
-
-def test_melodic_track_freeze_idempotent():
-    """freeze() можно вызывать многократно."""
-    t = MelodicTrack(name="Pad 1", profile_name="pad")
-    t.freeze()
-    t.freeze()
-    assert t.mutate == 0.0
-
-
-# ---------------------------------------------------------------------------
-# Session — freeze/evolve (C5)
-# ---------------------------------------------------------------------------
-
-
-def test_session_freeze_all():
-    """freeze_all() замораживает все дорожки."""
-    s = Session()
-    pad = s.create_melodic_track(profile="pad")
-    drum = s.create_drum_track()
-    s.freeze_all()
-    assert pad.mutate == 0.0
-    assert drum.mutate == 0.0
-
-
-def test_session_evolve_all():
-    """evolve_all() возобновляет мутацию."""
-    s = Session()
-    pad = s.create_melodic_track(profile="pad")
-    drum = s.create_drum_track()
-    s.freeze_all()
-    s.evolve_all(default_mutate=0.7)
-    assert pad.mutate == 0.7
-    assert drum.mutate == 0.5
 
 
 def test_session_total_mutation_count_empty():
@@ -683,14 +675,6 @@ def test_session_total_mutation_count_with_tracks():
     assert s.total_mutation_count == 0
 
 
-def test_session_freeze_all_empty():
-    """freeze_all() на пустой сессии — no-op, не падает."""
-    s = Session()
-    s.freeze_all()
-    s.evolve_all()
-    assert s.total_mutation_count == 0
-
-
 # ---------------------------------------------------------------------------
 # §4.4 — счётчик мутаций отражает реальные изменения
 # ---------------------------------------------------------------------------
@@ -702,25 +686,6 @@ def test_track_mutation_count_increments():
     t.record_mutation()
     t.record_mutation()
     assert t.mutation_count == 2
-
-
-def test_track_freeze_resets_mutation_count():
-    """freeze() обнуляет счётчик — отсчёт начинается заново."""
-    t = MelodicTrack(name="Pad 1", profile_name="pad")
-    t.record_mutation(5)
-    t.freeze()
-    assert t.mutation_count == 0
-
-
-def test_drum_track_mutation_count_shared_counter():
-    """DrumTrack пишет в общий счётчик базового класса."""
-    dt = DrumTrack(name="Drum 1")
-    dt.mutate = 1.0
-    dt.maybe_mutate(0.0, bpm=120.0)
-    dt.maybe_mutate(current_beat=1000.0, bpm=120.0)
-    assert dt.mutation_count > 0
-    dt.freeze()
-    assert dt.mutation_count == 0
 
 
 def test_session_total_mutation_count_sums_tracks():

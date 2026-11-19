@@ -49,6 +49,7 @@ class Session:
         profile: str = "pad",
         channel: int | None = None,
         port: str | None = None,
+        name: str | None = None,
         **kwargs: object,
     ) -> MelodicTrack:
         """Создать мелодическую дорожку.
@@ -59,6 +60,8 @@ class Session:
                 (канал 9/ch10 резервируется под drum, чтобы мелодика не
                 слипалась с ударными на одном порту).
             port: Имя MIDI-порта или ``None``.
+            name: Явное имя дорожки; ``None`` — автоимя счётчика
+                (``"Pad 1/2/…"``). Явное имя счётчик не сдвигает.
             **kwargs: Дополнительные параметры для ``MelodicTrack``.
 
         Returns:
@@ -66,16 +69,17 @@ class Session:
 
         Raises:
             ValueError: При неизвестном профиле, превышении лимита,
-                занятости всех каналов или канале вне 0..15.
+                занятости всех каналов, канале вне 0..15, пустом или
+                дублирующемся имени.
         """
         self._check_limit()
         if profile not in PROFILES:
             raise ValueError(f"Неизвестный профиль: {profile!r}")
+        name = self._resolve_track_name(name, profile)
         if channel is None:
             channel = self._alloc_channel()
         elif not 0 <= channel <= 15:
             raise ValueError(f"MIDI-канал вне диапазона 0..15: {channel}")
-        name = self._next_name(profile)
         track = MelodicTrack(
             name=name,
             profile_name=profile,
@@ -131,6 +135,7 @@ class Session:
         channel: int = 9,
         port: str | None = None,
         steps: int = 16,
+        name: str | None = None,
     ) -> DrumTrack:
         """Создать drum-дорожку.
 
@@ -138,18 +143,21 @@ class Session:
             channel: MIDI-канал 0..15 (по умолчанию 9 = ch10).
             port: Имя MIDI-порта или ``None``.
             steps: Размер сетки (16/32/48/64).
+            name: Явное имя дорожки; ``None`` — автоимя счётчика
+                (``"Drum 1/2/…"``). Явное имя счётчик не сдвигает.
 
         Returns:
             Созданная drum-дорожка.
 
         Raises:
-            ValueError: При превышении лимита дорожек или drum-машин.
+            ValueError: При превышении лимита дорожек/drum-машин или
+                пустом/дублирующемся имени.
         """
         self._check_limit()
         drum_count = sum(1 for t in self._tracks.values() if isinstance(t, DrumTrack))
         if drum_count >= self.MAX_DRUM_TRACKS:
             raise ValueError(f"Лимит drum-машин: {self.MAX_DRUM_TRACKS}")
-        name = self._next_name("drum")
+        name = self._resolve_track_name(name, "drum")
         track = DrumTrack(
             name=name,
             channel=channel,
@@ -288,37 +296,6 @@ class Session:
             track.inject_sources(sources)
         log.debug("Session: propagate_chords (%d melodic)", len(melodic))
 
-    # ------------------------------------------------------------------
-    # Freeze / Evolve
-    # ------------------------------------------------------------------
-
-    def freeze_all(self) -> None:
-        """Заморозить мутацию на всех дорожках.
-
-        Устанавливает ``mutate = 0`` на всех DrumTrack и MelodicTrack.
-        Вызывает ``freeze()`` на каждой DrumTrack (сохраняет базовый паттерн).
-        """
-        for track in self._tracks.values():
-            if isinstance(track, DrumTrack):
-                track.freeze()
-                track.mutate = 0.0
-            elif isinstance(track, MelodicTrack):
-                track.freeze()
-        log.info("Session: all tracks frozen")
-
-    def evolve_all(self, default_mutate: float = 0.5) -> None:
-        """Возобновить мутацию на всех дорожках.
-
-        Аргументы:
-            default_mutate: Значение mutate для мелодических дорожек.
-        """
-        for track in self._tracks.values():
-            if isinstance(track, DrumTrack):
-                track.mutate = 0.5
-            elif isinstance(track, MelodicTrack):
-                track.mutate = default_mutate
-        log.info("Session: all tracks evolved")
-
     @property
     def total_mutation_count(self) -> int:
         """Суммарное количество мутаций всех дорожек (для дисплея)."""
@@ -342,3 +319,29 @@ class Session:
         self._counters[profile] = self._counters.get(profile, 0) + 1
         prefix = profile.capitalize()
         return f"{prefix} {self._counters[profile]}"
+
+    def _resolve_track_name(self, name: str | None, profile: str) -> str:
+        """Имя дорожки для создания: автоимя или проверенное явное.
+
+        Автосчётчик инкрементируется только при автогенерации — явные
+        имена его не сдвигают (следующий автономер «не прыгает»).
+
+        Аргументы:
+            name: Явное имя или ``None`` (автоимя по счётчику профиля).
+            profile: Профиль/префикс для автогенерации (``"pad"``, ``"drum"``).
+
+        Returns:
+            Имя для новой дорожки.
+
+        Raises:
+            ValueError: Явное имя пустое (или из одних пробелов) либо
+                дорожка с таким именем уже существует.
+        """
+        if name is None:
+            return self._next_name(profile)
+        resolved = str(name).strip()
+        if not resolved:
+            raise ValueError("Имя дорожки не может быть пустым")
+        if resolved in self._tracks:
+            raise ValueError(f"Дорожка уже существует: {resolved!r}")
+        return resolved

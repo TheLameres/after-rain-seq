@@ -20,12 +20,11 @@ from src.session.mutation.note_drift import NoteDrift
 from src.session.mutation.param_drift import ParamDrift
 
 
-def _engine_with(track: MelodicTrack, mutate: float = 0.0) -> MutationEngine:
+def _engine_with(track: MelodicTrack) -> MutationEngine:
     me = MutationEngine(rng=random.Random(7))
     me.register_track(
         track.name,
         track.profile_name,
-        mutate=mutate,
         degrees=list(track.degrees),
         gate=track.gate,
         track=track,
@@ -119,7 +118,7 @@ class TestDegreesReachDrift:
 
     def test_length_change_does_not_crash_next_ticks(self) -> None:
         t = MelodicTrack(name="L", profile_name="lead", degrees=[0, 2, 4, 2])
-        me = _engine_with(t, mutate=1.0)
+        me = _engine_with(t)
         beat = 0.0
         for _ in range(5):
             beat += 1000.0
@@ -134,7 +133,7 @@ class TestDegreesReachDrift:
     def test_tick_without_edit_does_not_reset_drift(self) -> None:
         """Без правки degrees ресинк не вызывается и накопленный дрейф живёт."""
         t = MelodicTrack(name="L", profile_name="lead", degrees=[0, 2, 4])
-        me = _engine_with(t, mutate=1.0)
+        me = _engine_with(t)
         me.tick(0.0)
         me.request_mutation("L", cycle_beats=4.0)
         me.tick(4.0)  # ровно одна мутация (count 0 -> всегда drift)
@@ -157,7 +156,7 @@ class TestDegreesReachDrift:
 
     def test_mutation_count_preserved_on_degrees_edit(self) -> None:
         t = MelodicTrack(name="L", profile_name="lead", degrees=[0, 2, 4])
-        me = _engine_with(t, mutate=1.0)
+        me = _engine_with(t)
         me.tick(1000.0)
         count_state = me.get_state("L").mutation_count  # type: ignore[union-attr]
         count_track = t.mutation_count
@@ -169,7 +168,7 @@ class TestDegreesReachDrift:
 
     def test_noop_edit_does_not_reset_drift(self) -> None:
         t = MelodicTrack(name="L", profile_name="lead", degrees=[0, 2, 4])
-        me = _engine_with(t, mutate=1.0)
+        me = _engine_with(t)
         beat = 0.0
         for _ in range(6):
             beat += 1000.0
@@ -226,7 +225,7 @@ class TestSetProfileRebuildsMechanism:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         t = MelodicTrack(name="X", profile_name="lead", degrees=[0, 2, 4])
-        me = _engine_with(t, mutate=1.0)
+        me = _engine_with(t)
         me.tick(0.0)
         me.request_mutation("X", cycle_beats=4.0)
         me.tick(4.0)

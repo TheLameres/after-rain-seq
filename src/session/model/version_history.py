@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import Generic, TypeVar
 
 T = TypeVar("T")
@@ -20,6 +21,9 @@ class VersionHistory(Generic[T]):
         self._limit = limit
         self._versions: list[T] = [root]
         self._cursor = 0
+        # Страховка от гонки REPL-поток ↔ main loop (design §7): push/undo/
+        # recall — составные операции над списком версий и курсором.
+        self._lock = threading.Lock()
 
     @property
     def cursor(self) -> int:
@@ -36,22 +40,25 @@ class VersionHistory(Generic[T]):
         return list(self._versions)
 
     def push(self, version: T) -> int:
-        del self._versions[self._cursor + 1 :]
-        self._versions.append(version)
-        self._cursor = len(self._versions) - 1
-        if len(self._versions) > self._limit:
-            del self._versions[1]
-            self._cursor -= 1
-        return self._cursor
+        with self._lock:
+            del self._versions[self._cursor + 1 :]
+            self._versions.append(version)
+            self._cursor = len(self._versions) - 1
+            if len(self._versions) > self._limit:
+                del self._versions[1]
+                self._cursor -= 1
+            return self._cursor
 
     def undo(self) -> bool:
-        if self._cursor == 0:
-            return False
-        self._cursor -= 1
-        return True
+        with self._lock:
+            if self._cursor == 0:
+                return False
+            self._cursor -= 1
+            return True
 
     def recall(self, index: int) -> bool:
-        if not 0 <= index < len(self._versions):
-            return False
-        self._cursor = index
-        return True
+        with self._lock:
+            if not 0 <= index < len(self._versions):
+                return False
+            self._cursor = index
+            return True
