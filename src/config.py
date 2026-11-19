@@ -69,6 +69,23 @@ class UiConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Scripting (план G2): стартовый скрипт
+# ---------------------------------------------------------------------------
+
+
+class ScriptingConfig(BaseModel):
+    """Скриптовый движок: стартовый скрипт (пусто = выключено).
+
+    Атрибуты:
+        startup: Путь к Python-скрипту, исполняемому после сборки App,
+            до main loop. Провал (валидация или исполнение) = приложение
+            не стартует (fail-fast, решение Q22).
+    """
+
+    startup: str = ""
+
+
+# ---------------------------------------------------------------------------
 # Main application config
 # ---------------------------------------------------------------------------
 
@@ -83,6 +100,7 @@ class AppConfig(BaseModel):
     drum: DrumConfig = Field(default_factory=DrumConfig)
     mutation: MutationConfig = Field(default_factory=MutationConfig)
     ui: UiConfig = Field(default_factory=UiConfig)
+    scripting: ScriptingConfig = Field(default_factory=ScriptingConfig)
     devices: dict[str, DeviceConfig] = Field(default_factory=dict)
 
     # ------------------------------------------------------------------
@@ -168,14 +186,9 @@ cc_map:
 drum:
   preview_on_select: true
   preview_velocity: 100
-  mutate_min_seconds: 8.0
-  mutate_max_seconds: 16.0
 
 mutation:
   enabled: true
-  mutate_min_seconds: 8.0
-  mutate_max_seconds: 16.0
-  default_mutate: 0.5
   drift_step_gate: 0.05
   drift_step_density: 0.1
   drift_step_register: 1.0
@@ -186,6 +199,11 @@ ui:
     space: [reverb, delay]
     depth: [resonance]
   flash_seconds: 3.0
+
+scripting:
+  # Стартовый скрипт: исполняется после сборки App, до main loop.
+  # Провал (валидация или исполнение) = приложение не стартует.
+  startup: ""
 
 devices:
   push2:

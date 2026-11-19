@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -15,6 +16,8 @@ if TYPE_CHECKING:
 
 from src.config import ensure_default_config, load_config
 from src.logging_config import VALID_LEVELS, apply_logging_config, attach_log_buffer
+from src.repl.engine_control import EngineControl
+from src.scripting.runner import ScriptRunner, format_report
 
 
 def main() -> None:
@@ -55,6 +58,12 @@ def main() -> None:
         metavar="NAME=LEVEL",
         help="Spring Boot-style: --log-layer src.midi=DEBUG (repeatable)",
     )
+    parser.add_argument(
+        "--script",
+        default=None,
+        metavar="FILE",
+        help="Run a Python script (after startup-script) before the main loop",
+    )
     args = parser.parse_args()
 
     # Create default config if absent, then load it
@@ -89,10 +98,22 @@ def main() -> None:
             print(f"  {name}")
         sys.exit(0)
 
-    _run_headless(args.config, args.simulate, repl=args.repl)
+    _run_headless(
+        args.config,
+        args.simulate,
+        repl=args.repl,
+        startup=cfg.scripting.startup,
+        script=args.script,
+    )
 
 
-def _run_headless(config_path: str, simulate: bool, repl: bool = False) -> None:
+def _run_headless(
+    config_path: str,
+    simulate: bool,
+    repl: bool = False,
+    startup: str = "",
+    script: str | None = None,
+) -> None:
     import signal
 
     from src.app.application import App
@@ -107,10 +128,43 @@ def _run_headless(config_path: str, simulate: bool, repl: bool = False) -> None:
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
+    # Скрипты (startup → CLI) до main loop: провал = приложение не стартует.
+    from src.app.engine_control import AppEngineControl
+
+    paths = [p for p in (startup, script) if p]
+    _run_scripts(app, AppEngineControl(app), *paths)
+
     log.info(
         "after-rain-seq headless mode (config=%s, simulate=%s)", config_path, simulate
     )
     app.run(repl=_build_repl(app, config_path) if repl else None)  # blocks until stop()
+
+
+def _run_scripts(app: App, control: EngineControl, *paths: str) -> None:
+    """Исполнить скрипты (startup → CLI); провал = отчёт + app.stop() + exit(1).
+
+    Порядок: startup из config, затем ``--script`` из CLI (решение Q11).
+    Провал любого скрипта (валидация или исполнение) — аварийное
+    завершение старта (решение Q22): применённые команды не откатываются,
+    приложение остаётся остановленным.
+
+    Аргументы:
+        app: Приложение (для ``app.stop()`` при провале).
+        control: Фасад движка для скриптов.
+        *paths: Пути к скриптам; пустые строки пропускаются.
+    """
+    log = logging.getLogger(__name__)
+    runner = ScriptRunner(control)
+    for path_text in paths:
+        if not path_text:
+            continue
+        report = runner.run_file(Path(path_text))
+        print(format_report(report))
+        if report.error is not None or report.diagnostics:
+            log.error("script failed: %s", path_text)
+            app.stop()
+            sys.exit(1)
+        log.info("script %s: %d call(s)", path_text, report.lines_executed)
 
 
 def _build_repl(app: App, config_path: str):
@@ -120,6 +174,7 @@ def _build_repl(app: App, config_path: str):
     from src.repl.history_store import history_path_for
     from src.repl.log_buffer import LogBuffer
     from src.repl.repl import Repl
+    from src.session.model.drum_track import GM_DRUM_MAP
     from src.session.model.melodic_profile import PROFILES
 
     log_buffer = LogBuffer()
@@ -133,6 +188,7 @@ def _build_repl(app: App, config_path: str):
         dynamic_providers={
             "profile": lambda: sorted(PROFILES),
             "scale": lambda: sorted(Voicing.HARMONIC_SCALES),
+            "lane": lambda: [name for _, name in GM_DRUM_MAP],
         },
     )
 
