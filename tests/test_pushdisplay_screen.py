@@ -25,7 +25,6 @@ def _tracks_view(title: str = "TRACKS 1-8/1") -> ScreenView:
                 profile="pad",
                 channel=0,
                 port=None,
-                frozen=False,
                 mutation_count=0,
                 selected=True,
             ),
@@ -92,7 +91,6 @@ def test_tracks_change_dirty_only_body() -> None:
         profile="pad",
         channel=0,
         port="Синт A",  # было None
-        frozen=False,
         mutation_count=0,
         selected=True,
     )
@@ -165,7 +163,75 @@ def test_demo_tab_change_dirties_body() -> None:
 
     disp = PushDisplay(fps=25)
     base = dict(screen="demo", title="DEMO", flash=None)
-    disp.update_screen(ScreenView(**base, demo=DemoView(top_tabs=("A", "B"), top_index=0, bottom_tabs=("X",), bottom_index=0, values=(0,) * 6)))
+    disp.update_screen(
+        ScreenView(
+            **base,
+            demo=DemoView(
+                top_tabs=("A", "B"),
+                top_index=0,
+                bottom_tabs=("X",),
+                bottom_index=0,
+                values=(0,) * 6,
+            ),
+        )
+    )
     disp.render_frame_only()
-    disp.update_screen(ScreenView(**base, demo=DemoView(top_tabs=("A", "B"), top_index=1, bottom_tabs=("X",), bottom_index=0, values=(0,) * 6)))
+    disp.update_screen(
+        ScreenView(
+            **base,
+            demo=DemoView(
+                top_tabs=("A", "B"),
+                top_index=1,
+                bottom_tabs=("X",),
+                bottom_index=0,
+                values=(0,) * 6,
+            ),
+        )
+    )
     assert "body" in disp._dirty_regions
+
+
+def test_set_pad_leds_sends_note_on_channels() -> None:
+    device, _, mock_out = _make_device_with_mock_ports()
+    device.send_midi = Push2Device.send_midi.__get__(device, Push2Device)
+
+    device.set_pad_leds({36: 5}, {44: 7})
+
+    sent = [c[0][0] for c in mock_out.send.call_args_list]
+    on = {
+        (int(m.channel), int(m.note)): int(m.velocity)
+        for m in sent
+        if m.type == "note_on"
+    }
+    assert on == {(0, 36): 5, (14, 44): 7}
+
+
+def test_set_pad_leds_diff_skips_unchanged_and_offs_removed() -> None:
+    device, _, mock_out = _make_device_with_mock_ports()
+    device.send_midi = Push2Device.send_midi.__get__(device, Push2Device)
+
+    device.set_pad_leds({36: 5})
+    mock_out.send.reset_mock()
+    device.set_pad_leds({36: 5})  # без изменений — тишина
+    assert mock_out.send.call_args_list == []
+    device.set_pad_leds({}, {})  # ячейка погасла — note_off
+    sent = [c[0][0] for c in mock_out.send.call_args_list]
+    assert [m.type for m in sent] == ["note_off"]
+
+
+def test_set_pad_leds_channel_switch_stops_old_channel() -> None:
+    device, _, mock_out = _make_device_with_mock_ports()
+    device.send_midi = Push2Device.send_midi.__get__(device, Push2Device)
+
+    device.set_pad_leds({}, {36: 5})  # pending: мигание на канале 14
+    device.set_pad_leds({36: 5}, {})  # применена: статика на канале 0
+    sent = [c[0][0] for c in mock_out.send.call_args_list]
+    offs14 = [m for m in sent if m.type == "note_off" and int(m.channel) == 14]
+    on0 = [m for m in sent if m.type == "note_on" and int(m.channel) == 0]
+    assert len(offs14) == 1
+    assert len(on0) == 1
+
+
+def test_set_pad_leds_noop_without_midi_out() -> None:
+    device = Push2Device()  # не подключён — не должно бросить
+    device.set_pad_leds({36: 5}, {44: 7})

@@ -7,14 +7,15 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class UiEvent:
-    """Одно событие от контроллера (кнопка/энкодер).
+    """Одно событие от контроллера (кнопка/энкодер/пад).
 
     Атрибуты:
-        kind: ``"button"`` или ``"encoder"``.
-        name: Имя кнопки/энкодера из mapping.py (физический слой).
+        kind: ``"button"``, ``"encoder"`` или ``"pad"``.
+        name: Имя кнопки/энкодера из mapping.py; для пада — номер ноты
+            (``"36"``..``"99"``) строкой.
         value: Для кнопки — 1 (press) / 0 (release); для энкодера —
             relative-инкремент (two's complement, уже декодирован
-            драйвером).
+            драйвером); для пада — velocity (0 = release).
     """
 
     kind: str
@@ -30,3 +31,8 @@ class UiEvent:
     def encoder(cls, name: str, increment: int) -> UiEvent:
         """Событие поворота энкодера."""
         return cls(kind="encoder", name=name, value=int(increment))
+
+    @classmethod
+    def pad(cls, note: int, velocity: int) -> UiEvent:
+        """Событие пада: note 36–99, velocity (0 = release)."""
+        return cls(kind="pad", name=str(int(note)), value=int(velocity))

@@ -116,6 +116,7 @@ class App:
         self._ui_queue: UiEventQueue | None = None
         self._ui: ScreenController | None = None
         self._last_led_states: dict[str, int] = {}
+        self._last_pad_leds: tuple[dict[int, int], dict[int, int]] | None = None
 
         atexit.register(self._atexit_cleanup)
 
@@ -225,6 +226,7 @@ class App:
                     except Exception as exc:  # noqa: BLE001
                         log.warning("UI event handling error: %s", exc)
                 self._update_button_leds()
+                self._update_pad_leds()
 
             # Hot-plug polling
             if self._port_manager and now - _last_port_poll >= _port_poll_interval:
@@ -261,7 +263,10 @@ class App:
     def _on_device_pad(self, slot: DeviceSlot, pad_n: int, velocity: int) -> None:
         """Called by device driver on pad press/release."""
         log.debug("Pad %d vel=%d on %s", pad_n, velocity, slot.device.name)
-        # TODO(Phase 4/D3): route to pads.py for CHORDS/NOTES/MORPH/DRUM modes
+        if isinstance(slot.device, Push2Device) and self._ui_queue is not None:
+            # VERSIONS/D3: в очередь; обработка — в main loop (drain).
+            self._ui_queue.put(UiEvent.pad(pad_n, velocity))
+            return
 
     def _on_device_button(
         self, slot: DeviceSlot, button_name: str, pressed: bool
@@ -311,6 +316,27 @@ class App:
         for slot in self._device_manager.slots:
             if isinstance(slot.device, Push2Device) and slot.device.is_connected:
                 slot.device.set_button_leds(states)
+
+    def _update_pad_leds(self) -> None:
+        """Подсветить пады Push 2 (дифф-отправка): статика + мигание pending.
+
+        Карту строит ScreenController: на экране VERSIONS — сетка версий
+        (spec §4), на остальных экранах пады гаснут.
+        """
+        if self._ui is None:
+            return
+        snap = self._status_snapshot
+        if snap is None:
+            return
+        states = self._ui.pad_led_states(snap)
+        if states == self._last_pad_leds:
+            return
+        self._last_pad_leds = (dict(states[0]), dict(states[1]))
+        if not self._device_manager:
+            return
+        for slot in self._device_manager.slots:
+            if isinstance(slot.device, Push2Device) and slot.device.is_connected:
+                slot.device.set_pad_leds(states[0], states[1])
 
     def _send_cc(self, port_label: str, param: str, channel: int, value: int) -> None:
         """Отправить CC по логическому имени параметра через PortRegistry."""
@@ -424,8 +450,13 @@ class App:
         # Determine default port label from config
         default_label = self._get_default_port_label()
 
-        # Event queue between CaptureOutput and Transport
-        self._event_queue = _queue.Queue(maxsize=4096)
+        # Event queue between CaptureOutput and Transport.  Повторная
+        # инициализация (hook-тесты подменяют очередь до вызова этого метода)
+        # должна переиспользовать уже установленную очередь: движки, созданные
+        # с ней, обязаны оставаться подключёнными к Transport.  В prod метод
+        # вызывается один раз из __init__ — guard не имеет эффекта.
+        if self._event_queue is None:
+            self._event_queue = _queue.Queue(maxsize=4096)
 
         # CaptureOutput intercepts isobar events into the queue.
         # Passed as output_device to Timeline so isobar does not try to
@@ -498,13 +529,18 @@ class App:
                 # планировщики и расписание мутаций должны отсчитываться заново.
                 for engine in melodic_engines:
                     engine.reset()
+                for engine in drum_engines:
+                    engine.reset()
                 if mutation_engine is not None:
-                    mutation_engine.restart(cm.state.bpm or self._sync_bpm)
+                    mutation_engine.restart()
             elif event.name == "STOP":
                 # C6: сброс планировщиков — после остановки не доставлять
                 # запланированное «прошлое». Тиков после STOP не будет, поэтому
-                # note-off доставляем сразу, а не через очередь.
+                # note-off доставляем сразу, а не через очередь. Melodic и drum
+                # движки сбрасываются одинаково.
                 for engine in melodic_engines:
+                    engine.reset()
+                for engine in drum_engines:
                     engine.reset()
                 transport.all_notes_off()
             original_dispatch(event)
@@ -542,17 +578,19 @@ class App:
         """
         if not mutation_config.enabled or not self._session:
             return
-        self._mutation_engine = MutationEngine(
-            default_mutate=mutation_config.default_mutate,
-        )
+        self._mutation_engine = MutationEngine()
         for track in self._session.ordered_tracks():
             if isinstance(track, MelodicTrack) and not track.profile.cc_only:
                 self._mutation_engine.register_track(
                     track_name=track.name,
                     profile_name=track.profile_name,
-                    mutate=track.mutate,
                     degrees=list(track.degrees),
                     gate=track.gate,
+                    track=track,  # §4.4: счётчик живёт на дорожке
+                )
+            elif isinstance(track, DrumTrack):
+                self._mutation_engine.register_drum_track(
+                    track_name=track.name,
                     track=track,  # §4.4: счётчик живёт на дорожке
                 )
         log.info(
@@ -808,11 +846,16 @@ class App:
                     gate=float(gate),
                     voicing=voicing,
                     octave=int(octave),
-                    mutate=float(track.mutate),
                     density=float(density),
                     density_applicable=density_applicable,
                     channel=int(track.channel),
                     color_slot=track.color_slot,
+                    pending=track.pending,
+                    history_len=(
+                        self._mutation_engine.history_len(track.name)
+                        if self._mutation_engine is not None
+                        else 0
+                    ),
                     degrees=tuple(
                         getattr(track, "pending_degrees", None)
                         or getattr(track, "degrees", ())
@@ -845,6 +888,11 @@ class App:
     def clock_manager(self) -> ClockManager | None:
         """ClockManager (read-only)."""
         return self._clock_manager
+
+    @property
+    def mutation_engine(self) -> MutationEngine | None:
+        """MutationEngine (read-only); None до ``_init_mutation``."""
+        return self._mutation_engine
 
     @property
     def tick_proxy(self) -> TickProxy | None:
@@ -890,6 +938,11 @@ class App:
     def status_snapshot(self) -> StatusSnapshot:
         """Последний снапшот состояния (собран в main loop)."""
         return self._status_snapshot
+
+    @property
+    def sync_bpm(self) -> float:
+        """BPM рантайма (fallback, когда клок ещё не даёт темп)."""
+        return self._sync_bpm
 
     def set_sync_bpm(self, value: float) -> None:
         """Установить BPM рантайма (тот же механизм, что у энкодера).

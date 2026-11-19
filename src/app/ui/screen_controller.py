@@ -46,11 +46,13 @@ from src.devices.display_state import (
     TrackDetailView,
     TrackMacroView,
     TrackRowView,
+    VersionColumnView,
+    VersionsView,
     WizardView,
 )
 from src.devices.push2.layout import Button
 from src.devices.push2.screens import DEFAULT_SCREENS, scale_root_rows
-from src.devices.push2.track_colors import track_color
+from src.devices.push2.track_colors import pad_index, track_color
 from src.devices.push2.widgets import SLOT_COUNT
 from src.harmony import progressions
 from src.harmony.voicings import VOICING_NAMES
@@ -76,10 +78,13 @@ DEMO_BUTTON = (
 SESSION_BUTTON = "Session"  # CC 51 — экран TRACKS
 CLIP_BUTTON = "Clip"  # CC 113 — GEN выбранной дорожки
 DEVICE_BUTTON = "Device"  # CC 110 — MACRO выбранной дорожки
+VERSIONS_BUTTON = "Duplicate"  # CC 88 — экран VERSIONS (сетка версий, spec §4)
 SCALE_BUTTON = "Scale"  # CC 58 — экран SCALE (корень/лад)
 SETUP_BUTTON = "Setup"  # CC 30 — экран SETUP (суб-вкладки настроек)
 LOWER_ROW_PREFIX = "Lower Row "  # CC 20–27 — дорожка страницы / удаление
 DELETE_BUTTON = "Delete"  # CC 118 — вооружается; + Lower Row удаляет трек
+NEW_BUTTON = "New"  # CC 87 — шаг мутации (Shift — все дорожки, spec §3)
+UNDO_BUTTON = "Undo"  # CC 119 — откат версии выбранной дорожки (spec §4c)
 
 # Суб-вкладки SETUP (заложена возможность расширения настроек).
 SETUP_TABS: tuple[str, ...] = ("clock", "midi", "link")
@@ -158,7 +163,13 @@ _MACRO_AXIS_BY_ENCODER: dict[int, MacroAxis] = {
 }
 
 # Экраны, где Left/Right двигают курсор дорожки.
-_TRACK_SCREENS = frozenset({ScreenId.TRACKS, ScreenId.TRACK_GEN, ScreenId.TRACK_MACRO})
+_TRACK_SCREENS = frozenset(
+    {ScreenId.TRACKS, ScreenId.TRACK_GEN, ScreenId.TRACK_MACRO, ScreenId.VERSIONS}
+)
+
+# Сетка VERSIONS: падов 8×8, note 36 — левый нижний угол, row-major вверх.
+PAD_GRID_BASE = 36
+PAD_GRID_SIZE = 8
 
 # Sender performance-CC: (port_label, param_name, channel, value).
 CcSender = Callable[[str, str, int, int], None]
@@ -204,6 +215,8 @@ class ScreenController:
             self._handle_button(event.name, bool(event.value), now, snap)
         elif event.kind == "encoder":
             self._handle_encoder(event.name, event.value, now, snap)
+        elif event.kind == "pad":
+            self._handle_pad(event.name, event.value, now, snap)
         else:
             log.debug("UiEvent неизвестного kind: %s", event.kind)
 
@@ -224,6 +237,8 @@ class ScreenController:
         )
         if screen is ScreenId.TRACKS:
             return replace(view, tracks=self._track_rows(snap))
+        if screen is ScreenId.VERSIONS:
+            return replace(view, versions=self._versions_view(snap))
         if screen is ScreenId.TRACK_GEN:
             detail = self._track_detail(snap)
             return replace(view, track=detail)
@@ -350,6 +365,9 @@ class ScreenController:
         if name == DEVICE_BUTTON:
             self.state.screen = ScreenId.TRACK_MACRO
             return
+        if name == VERSIONS_BUTTON:
+            self.state.screen = ScreenId.VERSIONS
+            return
         if name == SCALE_BUTTON:
             self.state.screen = ScreenId.SCALE
             return
@@ -389,6 +407,9 @@ class ScreenController:
         elif name in ("Up", "Down") and screen is ScreenId.SETUP:
             step = -1 if name == "Up" else 1
             self.state.setup_tab = (self.state.setup_tab + step) % len(SETUP_TABS)
+        elif name in ("Up", "Down") and screen is ScreenId.VERSIONS:
+            # Spec §4b: Up/Down — версии активной дорожки, Shift — страницы по 8.
+            self._versions_scroll(-1 if name == "Up" else 1, snap)
         elif name == "Left":
             self._nav_left(snap)
         elif name == "Right":
@@ -406,13 +427,27 @@ class ScreenController:
                 ),
                 now,
             )
-        elif name == "Record":
-            if screen in (ScreenId.TRACK_GEN, ScreenId.TRACK_MACRO):
-                track = self._selected_track(snap)
-                if track is not None:
-                    self._command(self._engine.freeze(track.name), now)
+        elif name == NEW_BUTTON:
+            # Spec §3: NEW — шаг мутации выбранной дорожки; Shift+NEW — все.
+            if self.state.shift:
+                result = self._engine.request_mutation(None)
             else:
-                self._command(self._engine.freeze(None), now)
+                track = self._selected_track(snap)
+                result = (
+                    self._engine.request_mutation(track.name)
+                    if track is not None
+                    else EngineResult.fail("no selected track")
+                )
+            self.state.flash(render_text(result), now, self._flash_seconds)
+        elif name == UNDO_BUTTON:
+            # Spec §4c: UNDO — откат выбранной дорожки; на корне — отказ.
+            track = self._selected_track(snap)
+            result = (
+                self._engine.undo_mutation(track.name)
+                if track is not None
+                else EngineResult.fail("no selected track")
+            )
+            self.state.flash(render_text(result), now, self._flash_seconds)
         elif name == DELETE_BUTTON:
             if self.state.shift:
                 # Shift+Delete — удаление выбранной дорожки (как раньше).
@@ -432,7 +467,7 @@ class ScreenController:
                     )
         elif name == "Browse" and screen is ScreenId.PORTS:
             self._command(self._engine.rescan_ports(), now)
-        # Прочие кнопки не назначены (Duplicate/Layout/Note — резерв).
+        # Прочие кнопки не назначены (Layout/Note — резерв).
 
     def _scale_root_button(self, name: str, now: float, snap: StatusSnapshot) -> bool:
         """SCALE: Upper/Lower Row 1–6 выбирают тонику; прочие кнопки — не наши.
@@ -686,13 +721,7 @@ class ScreenController:
         elif idx == 7 and track.voicing and increment:
             octave = max(0, min(MAX_OCTAVE, track.octave + increment))
             self._command(self._engine.set_track_octave(track.name, octave), now)
-        elif idx == 4:
-            self._command(
-                self._engine.set_track_mutate(
-                    track.name, track.mutate + increment / 127.0
-                ),
-                now,
-            )
+        # E5 свободен (ось MUT удалена вместе с freeze-семантикой);
         # E6..E8 на GEN не назначены (CC-оси переехали на MACRO: E1..E3).
 
     def _cycle_voicing(self, track: TrackSummary, increment: int, now: float) -> None:
@@ -875,6 +904,7 @@ class ScreenController:
             SESSION_BUTTON: LED_WHITE,
             CLIP_BUTTON: LED_WHITE,
             DEVICE_BUTTON: LED_WHITE,
+            VERSIONS_BUTTON: LED_WHITE,
             SCALE_BUTTON: LED_WHITE,
             SETUP_BUTTON: LED_WHITE,
             DEMO_BUTTON: LED_WHITE,
@@ -894,6 +924,13 @@ class ScreenController:
         # остальные кнопки ряда освобождены под будущее и не подсвечиваются).
         states[PORTS_BUTTON] = LED_WHITE if state.screen is ScreenId.PORTS else LED_GRAY
         states[DEMO_BUTTON] = LED_GREEN if state.screen is ScreenId.DEMO else LED_GRAY
+        # VERSIONS: активный экран — зелёный, как у остальных экранов.
+        states[VERSIONS_BUTTON] = (
+            LED_GREEN if state.screen is ScreenId.VERSIONS else LED_GRAY
+        )
+        # NEW/UNDO — рабочие кнопки ручной мутации (spec §3, §4c).
+        states[NEW_BUTTON] = LED_WHITE
+        states[UNDO_BUTTON] = LED_WHITE
         # Upper/Lower Row 1–8 — из Grid-макета экрана (Ф6): Button.active → зелёный,
         # иначе белый. Экраны без макета (TRACKS, SCALE, SETUP, WIZARD) — карта ниже.
         for row_name, buttons in self._layout_button_leds(self.build_view(snap, 0.0)):
@@ -940,6 +977,114 @@ class ScreenController:
         return tuple(rows)
 
     # ------------------------------------------------------------------
+    # VERSIONS: сетка версий и пады (spec §4, §4a–§4c)
+    # ------------------------------------------------------------------
+
+    def _versions_scroll(self, delta: int, snap: StatusSnapshot) -> None:
+        """Прокрутка окна версий: Shift — страница из 8, иначе одна версия."""
+        step = PAGE_SIZE if self.state.shift else 1
+        self.state.version_scroll += delta * step
+        self._clamp_version_scroll(snap)
+
+    def _clamp_version_scroll(self, snap: StatusSnapshot) -> int:
+        """Кламп ``version_scroll`` по самой длинной истории в сессии."""
+        total = max((t.history_len for t in snap.tracks), default=0)
+        max_scroll = max(0, total - PAGE_SIZE)
+        self.state.version_scroll = max(0, min(max_scroll, self.state.version_scroll))
+        return self.state.version_scroll
+
+    def _versions_view(self, snap: StatusSnapshot) -> VersionsView:
+        """DTO экрана VERSIONS: колонки страницы дорожек + окно версий."""
+        scroll = self._clamp_version_scroll(snap)
+        start = self.state.page * PAGE_SIZE
+        page_tracks = snap.tracks[start : start + PAGE_SIZE]
+        columns = tuple(
+            VersionColumnView(
+                name=t.name,
+                color=track_color(t.color_slot) if t.color_slot is not None else 0,
+                history_len=t.history_len,
+                current=t.mutation_count,
+                pending=t.pending,
+                selected=(start + i) == self.state.selected,
+            )
+            for i, t in enumerate(page_tracks)
+        )
+        return VersionsView(
+            columns=columns,
+            version_scroll=scroll,
+            page=self.state.page,
+            total_tracks=len(snap.tracks),
+        )
+
+    def _handle_pad(
+        self, name: str, velocity: int, now: float, snap: StatusSnapshot
+    ) -> None:
+        """Пад (note 36–99): на VERSIONS — выбор дорожки + recall версии.
+
+        Колонка другой дорожки выбирает дорожку и переводит её на версию
+        (spec §4). Пады других режимов — D3 (CHORDS/NOTES/MORPH/DRUM).
+        """
+        if velocity <= 0:
+            return  # release игнорируем
+        if self.state.screen is not ScreenId.VERSIONS:
+            return
+        try:
+            note = int(name)
+        except ValueError:
+            return
+        idx = note - PAD_GRID_BASE
+        if not 0 <= idx < PAD_GRID_SIZE * PAD_GRID_SIZE:
+            return
+        col, row_from_bottom = idx % PAD_GRID_SIZE, idx // PAD_GRID_SIZE
+        row = PAD_GRID_SIZE - 1 - row_from_bottom  # версия 0 — верхняя строка
+        track_idx = self.state.page * PAGE_SIZE + col
+        if track_idx >= len(snap.tracks):
+            return
+        track = snap.tracks[track_idx]
+        self.state.selected = track_idx  # пад выбирает дорожку колонки
+        version = self.state.version_scroll + row
+        result = self._engine.recall_version(track.name, version)
+        self.state.flash(render_text(result), now, self._flash_seconds)
+
+    def pad_led_states(
+        self, snap: StatusSnapshot
+    ) -> tuple[dict[int, int], dict[int, int]]:
+        """LED-карта падов: (static, blinking), note 36–99 → индекс палитры.
+
+        Пады подсвечиваются только на экране VERSIONS (spec §4); на остальных
+        экранах карта пуста — дифф-отправка гасит всё. Существующая версия —
+        статика (канал 0), текущая версия дорожки с pending — мигание
+        (канал 14, spec §4a/§4c). Верхняя строка сетки — начало окна версий.
+        """
+        if self.state.screen is not ScreenId.VERSIONS:
+            return ({}, {})
+        start = self.state.page * PAGE_SIZE
+        page_tracks = snap.tracks[start : start + PAGE_SIZE]
+        if not page_tracks:
+            return ({}, {})
+        scroll = self._clamp_version_scroll(snap)
+        static: dict[int, int] = {}
+        blinking: dict[int, int] = {}
+        for col, track in enumerate(page_tracks):
+            color = (
+                pad_index(track.color_slot)
+                if track.color_slot is not None
+                else LED_WHITE
+            )
+            for row in range(PAD_GRID_SIZE):
+                version = scroll + row
+                if version >= track.history_len:
+                    continue  # пустая ячейка — off
+                # note 36 — левый нижний пад; визуальный ряд r растёт вниз
+                # по версиям, а ноты — вверх.
+                note = PAD_GRID_BASE + (PAD_GRID_SIZE - 1 - row) * PAD_GRID_SIZE + col
+                if track.pending and version == track.mutation_count:
+                    blinking[note] = color
+                else:
+                    static[note] = color
+        return (static, blinking)
+
+    # ------------------------------------------------------------------
     # Хелперы view
     # ------------------------------------------------------------------
 
@@ -967,6 +1112,12 @@ class ScreenController:
             end = min(start + PAGE_SIZE, max(total, start + PAGE_SIZE))
             page_count = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
             return f"TRACKS {start + 1}-{end}/{page_count}"
+        if screen is ScreenId.VERSIONS:
+            total = len(snap.tracks)
+            start = self.state.page * PAGE_SIZE
+            end = min(start + PAGE_SIZE, max(total, start + PAGE_SIZE))
+            page_count = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+            return f"VERSIONS {start + 1}-{end}/{page_count}"
         if screen is ScreenId.TRACK_GEN:
             track = self._selected_track(snap)
             return f"GEN: {track.name}" if track else "GEN: —"
@@ -998,9 +1149,9 @@ class ScreenController:
                 profile=t.profile,
                 channel=t.channel,
                 port=t.port,
-                frozen=t.frozen,
                 mutation_count=t.mutation_count,
                 selected=i == self.state.selected % PAGE_SIZE,
+                pending=t.pending,
                 # §4.8: цвет — свойство дорожки, а не позиция на странице.
                 color=track_color(t.color_slot) if t.color_slot is not None else 0,
             )
@@ -1017,7 +1168,6 @@ class ScreenController:
                     profile="",
                     channel=0,
                     port=None,
-                    frozen=False,
                     mutation_count=0,
                     selected=True,
                 )
@@ -1050,7 +1200,6 @@ class ScreenController:
             gate=track.gate,
             voicing=track.voicing,
             density=track.density if track.density_applicable else None,
-            mutate=track.mutate,
             color=self._track_color_for_selection(snap),
             degrees=track.degrees,
             preset=progressions.name_of(track.degrees),

@@ -180,6 +180,7 @@ class TestScreens:
             "scale",
             "setup",
             "ports",
+            "versions",
             "demo",
         )
 
@@ -238,7 +239,9 @@ class TestScreens:
         fb = make_fb()
         screens.draw_header(fb, view)
         assert non_bg_count(fb, 4, 0, 300, 13) > 5  # заголовок (y 0–13)
-        assert color_count(fb, Colors.DISCONNECTED, FRAME_W - 80, 1, 76, 12) > 3  # error:
+        assert (
+            color_count(fb, Colors.DISCONNECTED, FRAME_W - 80, 1, 76, 12) > 3
+        )  # error:
 
     def test_draw_full_frame(self) -> None:
         """draw() = header + body целиком (спайки/эмулятор)."""
@@ -249,7 +252,6 @@ class TestScreens:
             profile="pad",
             channel=0,
             port=None,
-            frozen=False,
             mutation_count=0,
             selected=True,
             color=Colors.CONNECTED,

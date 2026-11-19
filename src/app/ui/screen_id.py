@@ -14,6 +14,8 @@ class ScreenId(Enum):
     - ``TRACKS`` — список дорожек, кнопка ``Session`` (CC 51);
     - ``TRACK_GEN`` — генерация выбранной дорожки, ``Clip`` (CC 113);
     - ``TRACK_MACRO`` — макро-CC синтов, ``Device`` (CC 110);
+    - ``VERSIONS`` — сетка версий ручной мутации (колонка=дорожка,
+      строка=версия, пад=recall), ``Duplicate`` (CC 88);
     - ``PORTS`` — порты и назначение дорожек, ``Mix`` (CC 112);
     - ``SCALE`` — корень/лад, ``Scale`` (CC 58);
     - ``SETUP`` — настройки (суб-вкладки), ``Setup`` (CC 30);
@@ -25,6 +27,7 @@ class ScreenId(Enum):
     TRACKS = "tracks"  # Session (CC 51)
     TRACK_GEN = "gen"  # генерация — Clip (CC 113)
     TRACK_MACRO = "macro"  # макро-CC синтов — Device (CC 110)
+    VERSIONS = "versions"  # сетка версий ручной мутации — Duplicate (CC 88)
     SCALE = "scale"  # корень/лад — Scale (CC 58)
     SETUP = "setup"  # настройки (суб-вкладки) — Setup (CC 30)
     PORTS = "ports"  # порты — Mix (CC 112)

@@ -31,12 +31,13 @@ def make_track(
     channel: int = 0,
     port: str | None = "Синт A",
     sources: tuple[str, ...] = (),
-    mutate: float = 0.5,
     gate: float = 0.9,
     density: float = 1.0,
     density_applicable: bool = False,
     kind: str = "melodic",
     color_slot: int | None = 0,
+    pending: bool = False,
+    history_len: int = 0,
 ) -> TrackSummary:
     return TrackSummary(
         name=name,
@@ -44,11 +45,12 @@ def make_track(
         profile=profile,
         sources=sources,
         mutation_count=0,
+        pending=pending,
+        history_len=history_len,
         port=port,
         gate=gate,
         voicing="1-3-5" if kind == "melodic" else "",
         octave=5,
-        mutate=mutate,
         density=density,
         density_applicable=density_applicable,
         channel=channel,
@@ -134,7 +136,9 @@ class MockEngine(EngineControl):
     def list_tracks(self) -> list[TrackSummary]:
         return list(self.tracks)
 
-    def create_track(self, profile: str, channel: int | None = None) -> EngineResult:
+    def create_track(
+        self, profile: str, channel: int | None = None, name: str | None = None
+    ) -> EngineResult:
         return self._rec("create_track", profile)
 
     def set_track_channel(self, name: str, channel: int) -> EngineResult:
@@ -149,13 +153,7 @@ class MockEngine(EngineControl):
     def unroute_track(self, name: str) -> EngineResult:
         return self._rec("unroute_track", name)
 
-    def freeze(self, name: str | None = None) -> EngineResult:
-        return self._rec("freeze", name)
-
-    def evolve(self) -> EngineResult:
-        return self._rec("evolve")
-
-    def create_drum_track(self) -> EngineResult:
+    def create_drum_track(self, name: str | None = None) -> EngineResult:
         return self._rec("create_drum_track")
 
     def set_track_sources(self, name: str, *sources: str) -> EngineResult:
@@ -176,11 +174,17 @@ class MockEngine(EngineControl):
     def set_track_density(self, name: str, density: float) -> EngineResult:
         return self._rec("set_track_density", name, density)
 
-    def set_track_mutate(self, name: str, mutate: float) -> EngineResult:
-        return self._rec("set_track_mutate", name, mutate)
+    def request_mutation(self, name: str | None = None) -> EngineResult:
+        return self._rec("request_mutation", name)
 
-    def evolve_track(self, name: str) -> EngineResult:
-        return self._rec("evolve_track", name)
+    def undo_mutation(self, name: str) -> EngineResult:
+        return self._rec("undo_mutation", name)
+
+    def recall_version(self, name: str, index: int) -> EngineResult:
+        return self._rec("recall_version", name, index)
+
+    def mutation_history(self, name: str) -> EngineResult:
+        return self._rec("mutation_history", name)
 
     # helpers для тестов
     def called(self, method: str) -> list[tuple]:
@@ -552,18 +556,12 @@ class TestButtons:
         assert engine.called("stop_transport")  # running=True → stop
         assert engine.called("start_transport") == []
 
-    def test_record_freezes_all_on_tracks(self) -> None:
+    def test_record_is_reserve(self) -> None:
+        """Record — резерв (freeze-семантика удалена): движок не вызывается."""
         ctl, engine, _ = make_controller((make_track("A"),))
         btn(ctl, "Record")
-        assert engine.called("freeze") == [(None,)]
-
-    def test_record_freezes_selected_on_track(self) -> None:
-        tracks = (make_track("A"), make_track("B"))
-        ctl, engine, _ = make_controller(tracks)
-        btn(ctl, "Down")
-        btn(ctl, "Clip")  # GEN выбранной (B)
-        btn(ctl, "Record")
-        assert engine.called("freeze") == [("B",)]
+        assert engine.called("freeze") == []
+        assert engine.called("set_track_mutate") == []
 
     def test_browse_rescans_only_on_ports(self) -> None:
         ctl, engine, _ = make_controller()
@@ -608,13 +606,6 @@ class TestEncoders:
         btn(ctl, "Clip")
         enc(ctl, 4)
         assert engine.called("set_track_density") == []
-
-    def test_track_mut_encoder(self) -> None:
-        tracks = (make_track("A", mutate=0.5),)
-        ctl, engine, _ = make_controller(tracks)
-        btn(ctl, "Clip")
-        enc(ctl, 5, inc=10)
-        assert engine.called("set_track_mutate")[0][0] == "A"
 
     def test_tempo_encoder_sets_bpm(self) -> None:
         ctl, engine, _ = make_controller()
@@ -1218,3 +1209,134 @@ class TestLayoutLed:
         states = ctl.button_led_states(engine.get_status())
         assert states["Lower Row 1"] == LED_GREEN
         assert states["Lower Row 2"] == LED_WHITE
+
+
+# ── VERSIONS: сетка версий ручной мутации (spec §4) ───────────────────────────
+
+
+def pad(
+    ctl: ScreenController, note: int, velocity: int = 100, now: float = NOW
+) -> None:
+    ctl.handle(UiEvent.pad(note, velocity), now)
+
+
+class TestVersionsScreen:
+    def _tracks(self) -> tuple[TrackSummary, ...]:
+        return (
+            make_track("A", color_slot=0),
+            make_track("B", color_slot=1),
+            make_track("D", kind="drum", color_slot=2),
+        )
+
+    def test_duplicate_opens_versions(self) -> None:
+        ctl, _engine, _ = make_controller(self._tracks())
+        btn(ctl, "Duplicate")
+        assert ctl.state.screen is ScreenId.VERSIONS
+
+    def test_new_requests_mutation_selected(self) -> None:
+        ctl, engine, _ = make_controller(self._tracks())
+        btn(ctl, "New")
+        assert engine.called("request_mutation") == [("A",)]
+
+    def test_shift_new_requests_all(self) -> None:
+        ctl, engine, _ = make_controller(self._tracks())
+        btn(ctl, "Shift")
+        btn(ctl, "New")
+        assert engine.called("request_mutation") == [(None,)]
+
+    def test_undo_uses_selected(self) -> None:
+        ctl, engine, _ = make_controller(self._tracks())
+        btn(ctl, "Undo")
+        assert engine.called("undo_mutation") == [("A",)]
+
+    def test_up_down_scroll_versions(self) -> None:
+        ctl, _engine, _ = make_controller((make_track("A", history_len=10),))
+        btn(ctl, "Duplicate")
+        btn(ctl, "Down")
+        assert ctl.state.version_scroll == 1
+        btn(ctl, "Up")
+        assert ctl.state.version_scroll == 0
+        btn(ctl, "Up")  # кламп по 0
+        assert ctl.state.version_scroll == 0
+
+    def test_shift_up_down_pages_of_eight(self) -> None:
+        ctl, _engine, _ = make_controller((make_track("A", history_len=20),))
+        btn(ctl, "Duplicate")
+        btn(ctl, "Shift")
+        btn(ctl, "Down")
+        assert ctl.state.version_scroll == 8
+        btn(ctl, "Shift")
+        btn(ctl, "Up")
+        assert ctl.state.version_scroll == 0
+
+    def test_scroll_clamped_by_history(self) -> None:
+        ctl, _engine, _ = make_controller((make_track("A", history_len=3),))
+        btn(ctl, "Duplicate")
+        btn(ctl, "Shift")
+        btn(ctl, "Down")  # +8, но максимум = 0 (история 3 < 8)
+        assert ctl.state.version_scroll == 0
+
+    def test_left_right_switch_active_track(self) -> None:
+        ctl, _engine, _ = make_controller(self._tracks())
+        btn(ctl, "Duplicate")
+        btn(ctl, "Right")
+        assert ctl.state.selected == 1
+        btn(ctl, "Left")
+        assert ctl.state.selected == 0
+
+    def test_pad_recall_selects_track_and_version(self) -> None:
+        ctl, engine, _ = make_controller(self._tracks())
+        btn(ctl, "Duplicate")
+        pad(ctl, 93)  # верхний ряд (версия 0), колонка 1 → дорожка B
+        assert engine.called("recall_version") == [("B", 0)]
+        assert ctl.state.selected == 1
+
+    def test_pad_lower_row_recalls_scrolled_version(self) -> None:
+        ctl, engine, _ = make_controller((make_track("A", history_len=10),))
+        btn(ctl, "Duplicate")
+        btn(ctl, "Down")  # scroll = 1
+        pad(ctl, 36)  # нижний ряд, колонка 0 → визуальный ряд 7 → версия 8
+        assert engine.called("recall_version") == [("A", 8)]
+
+    def test_pad_ignored_on_other_screens(self) -> None:
+        ctl, engine, _ = make_controller(self._tracks())
+        pad(ctl, 36)
+        assert engine.called("recall_version") == []
+
+    def test_pad_leds_empty_on_other_screens(self) -> None:
+        ctl, engine, _ = make_controller(self._tracks())
+        assert ctl.pad_led_states(engine.get_status()) == ({}, {})
+
+    def test_pad_leds_grid_on_versions(self) -> None:
+        from src.devices.push2.track_colors import pad_index
+
+        tracks = (
+            make_track("A", color_slot=0, history_len=3, pending=True),
+            make_track("B", color_slot=1, history_len=1),
+        )
+        ctl, engine, _ = make_controller(tracks)
+        btn(ctl, "Duplicate")
+        static, blinking = ctl.pad_led_states(engine.get_status())
+        color_a = pad_index(0)
+        color_b = pad_index(1)
+        # Дорожка A: версии 0–2 существуют; текущая (0) с pending → мигание.
+        assert blinking == {92: color_a}
+        # Остальные существующие версии — статика; у B только версия 0.
+        assert static == {84: color_a, 76: color_a, 93: color_b}
+
+    def test_versions_view_columns(self) -> None:
+        ctl, engine, _ = make_controller(self._tracks())
+        btn(ctl, "Duplicate")
+        view = ctl.build_view(engine.get_status(), NOW)
+        assert view.versions is not None
+        assert [c.name for c in view.versions.columns] == ["A", "B", "D"]
+        assert view.versions.version_scroll == 0
+        assert view.versions.columns[0].selected is True
+        assert view.versions.columns[2].current == 0
+
+    def test_versions_title(self) -> None:
+        ctl, engine, _ = make_controller(self._tracks())
+        btn(ctl, "Duplicate")
+        view = ctl.build_view(engine.get_status(), NOW)
+        # Тот же стиль, что TRACKS: окно страницы из 8 слотов.
+        assert view.title == "VERSIONS 1-8/1"

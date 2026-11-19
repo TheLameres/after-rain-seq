@@ -35,6 +35,7 @@ from src.devices.display_state import (
     TrackDetailView,
     TrackMacroView,
     TrackRowView,
+    VersionsView,
     WizardView,
 )
 from src.devices.push2.layout import (
@@ -81,6 +82,7 @@ __all__ = [
     "TrackGenScreen",
     "TrackMacroScreen",
     "TracksScreen",
+    "VersionsScreen",
     "WizardScreen",
     "draw_demo",
     "draw_header",
@@ -90,6 +92,7 @@ __all__ = [
     "draw_track",
     "draw_track_macro",
     "draw_tracks",
+    "draw_versions",
     "draw_wizard",
 ]
 
@@ -214,9 +217,16 @@ class TracksScreen(Screen):
             Label(port, "sm", Colors.GRAY if row.port else Colors.DIM).render(
                 fb, Rect(370, y, 190, _TRACK_ROW_H)
             )
-            state = "FROZEN" if row.frozen else f"mut:{row.mutation_count}"
-            state_color = Colors.BPM_LINK if row.frozen else Colors.DIM
-            Label(state, "sm", state_color).render(fb, Rect(570, y, 110, _TRACK_ROW_H))
+            if row.pending:
+                # Spec §4a: ожидающая мутация — флаг PENDING (мигание строки —
+                # отдельная задача; пады мигают LED-каналом 14).
+                Label("PENDING", "sm", FLASH).render(
+                    fb, Rect(570, y, 110, _TRACK_ROW_H)
+                )
+            else:
+                Label(f"mut:{row.mutation_count}", "sm", Colors.DIM).render(
+                    fb, Rect(570, y, 110, _TRACK_ROW_H)
+                )
             if row.kind == "drum":
                 Label("DRUM", "sm", Colors.BPM_MIDI).render(
                     fb, Rect(690, y, 80, _TRACK_ROW_H)
@@ -282,23 +292,28 @@ class TrackGenScreen(Screen):
             List("SRC2 (E2)", (src2,) if src2 != "—" else ("—",)),
             Range("GATE (E3)", gate, 0.0, 100.0, unit=" %"),
             Range("DEN (E4)", den, 0.0, 100.0, unit=" %"),
-            Range("MUT (E5)", detail.mutate * 100, 0.0, 100.0, unit=" %"),
+            # E5 свободен (ось MUT удалена вместе с freeze-семантикой).
+            Empty(),
             List(
                 "PRESET (E6)",
                 preset_options(detail.preset),
                 index=preset_index(detail.preset),
                 rows=3,
             ),
-            List(
-                "VOICING (E7)",
-                VOICING_NAMES,
-                index=VOICING_NAMES.index(detail.voicing)
-                if detail.voicing in VOICING_NAMES
-                else 0,
-                rows=3,
-            )
-            if detail.voicing
-            else Empty(),
+            (
+                List(
+                    "VOICING (E7)",
+                    VOICING_NAMES,
+                    index=(
+                        VOICING_NAMES.index(detail.voicing)
+                        if detail.voicing in VOICING_NAMES
+                        else 0
+                    ),
+                    rows=3,
+                )
+                if detail.voicing
+                else Empty()
+            ),
             Range(
                 "OCT (E8)",
                 float(detail.octave) if detail.octave is not None else None,
@@ -312,9 +327,11 @@ class TrackGenScreen(Screen):
             Text("PORT", f"> {detail.port}" if detail.port else "—"),
             Text("CH", str(detail.channel)),
             Text("PROFILE", detail.profile),
-            Text("VOICING", detail.voicing or "—")
-            if detail.kind != "drum"
-            else Empty(),
+            (
+                Text("VOICING", detail.voicing or "—")
+                if detail.kind != "drum"
+                else Empty()
+            ),
             Text("DEG", format_degrees(detail.degrees) if detail.degrees else "\u2014"),
         ) + (Empty(),) * 3
 
@@ -400,9 +417,11 @@ class WizardScreen(Screen):
         ) + (Empty(),) * (SLOT_COUNT - 1)
         foot: tuple[SlotItem, ...] = (
             Text("STEP", step_label),
-            Text("PAGE", f"{wizard.page + 1}/{wizard.page_count}")
-            if wizard.page_count > 1
-            else Empty(),
+            (
+                Text("PAGE", f"{wizard.page + 1}/{wizard.page_count}")
+                if wizard.page_count > 1
+                else Empty()
+            ),
         ) + (Empty(),) * 6
         return ScreenLayout(encoders=encoders, foot=foot)
 
@@ -673,6 +692,64 @@ class PortsScreen(Screen):
         render_layout(fb, self.layout(view))
 
 
+# ── VERSIONS (сетка версий ручной мутации) ────────────────────────────────────
+
+
+class VersionsScreen(Screen):
+    """VERSIONS (Duplicate): сетка версий — колонка=дорожка, строка=версия.
+
+    Версия 0 (корень) в верхней строке окна, стек растёт вниз; вертикальное
+    окно из 8 версий задаёт ``version_scroll``. Текущая версия дорожки залита
+    её цветом; PENDING у заголовка колонки (мигание пада — LED-канал 14,
+    мигание дисплея — отдельная задача, spec §4a). Сами пады красит
+    ``ScreenController.pad_led_states`` — здесь только дисплей.
+    """
+
+    name = "versions"
+    view_attr = "versions"
+
+    _HEADER_H = 16
+    _ROW_H = 13
+
+    def draw_body(self, fb: FrameBuffer, body: VersionsView) -> None:
+        fb.fill_rect(0, BODY_Y0, FRAME_W, BODY_Y1 - BODY_Y0, Colors.BG)
+        col_w = FRAME_W // 8  # 120 px — колонка под кнопкой/энкодером
+        y0 = BODY_Y0 + self._HEADER_H
+        for i, col in enumerate(body.columns):
+            x = i * col_w
+            Marker(col.color or Colors.DIM, size=8).render(
+                fb, Rect(x + 4, BODY_Y0, 8, self._HEADER_H)
+            )
+            name = col.name
+            name_w = col_w - (30 if col.pending else 16)
+            while name and fb.text_width(name, "sm") > name_w:
+                name = name[:-1]
+            name_color = Colors.WHITE if col.selected else Colors.GRAY
+            Label(name, "sm", name_color).render(
+                fb, Rect(x + 16, BODY_Y0, name_w, self._HEADER_H)
+            )
+            if col.pending:
+                Label("PEND", "sm", FLASH).render(
+                    fb, Rect(x + col_w - 32, BODY_Y0, 30, self._HEADER_H)
+                )
+            for r in range(8):
+                version = body.version_scroll + r
+                if version >= col.history_len:
+                    continue  # несуществующая версия — пустая ячейка
+                y = y0 + r * self._ROW_H
+                current = version == col.current
+                if current:
+                    fb.fill_rect(
+                        x + 4, y, col_w - 8, self._ROW_H - 1, col.color or Colors.DIM
+                    )
+                    color = Colors.BG
+                else:
+                    color = col.color or Colors.GRAY
+                Label(str(version), "sm", color).render(
+                    fb, Rect(x + 12, y, col_w - 24, self._ROW_H)
+                )
+
+
 # ── Реестр и композитор ───────────────────────────────────────────────────────
 
 DEFAULT_SCREENS: tuple[Screen, ...] = (
@@ -683,6 +760,7 @@ DEFAULT_SCREENS: tuple[Screen, ...] = (
     ScaleScreen(),
     SetupScreen(),
     PortsScreen(),
+    VersionsScreen(),
     DemoScreen(),
 )
 
@@ -778,6 +856,11 @@ def draw_setup(fb: FrameBuffer, view: SyncView) -> None:
 def draw_ports(fb: FrameBuffer, view: PortsView) -> None:
     """PORTS body: список портов + ROUTE."""
     PortsScreen().draw_body(fb, view)
+
+
+def draw_versions(fb: FrameBuffer, view: VersionsView) -> None:
+    """VERSIONS body: сетка версий по колонкам дорожек."""
+    VersionsScreen().draw_body(fb, view)
 
 
 def draw_demo(fb: FrameBuffer, view: DemoView) -> None:

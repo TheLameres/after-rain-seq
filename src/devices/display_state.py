@@ -29,10 +29,32 @@ class TrackRowView:
     profile: str
     channel: int
     port: str | None  # None — не привязана (молчит)
-    frozen: bool
     mutation_count: int
     selected: bool
+    pending: bool = False  # ожидающая ручная мутация (флаг PENDING, spec §4a)
     color: int = 0  # BGR565 — цветной маркер дорожки (track_colors)
+
+
+@dataclass(frozen=True)
+class VersionColumnView:
+    """Колонка сетки VERSIONS: дорожка и окно её версий (spec §4)."""
+
+    name: str
+    color: int  # BGR565 — цвет дорожки (маркер/заливка текущей версии)
+    history_len: int  # всего версий (0 — не зарегистрирована в движке)
+    current: int  # курсор: номер текущей версии от корня
+    pending: bool  # ожидающая мутация — мигание пада текущей версии
+    selected: bool  # активная колонка (курсор дорожки)
+
+
+@dataclass(frozen=True)
+class VersionsView:
+    """Экран VERSIONS (Duplicate): сетка 8×8 — колонка=дорожка, строка=версия."""
+
+    columns: tuple[VersionColumnView, ...]  # до 8 колонок страницы
+    version_scroll: int  # верхняя видимая версия (страница версий по 8)
+    page: int  # страница дорожек (0 = дорожки 1–8)
+    total_tracks: int  # всего дорожек в сессии
 
 
 @dataclass(frozen=True)
@@ -53,7 +75,6 @@ class TrackDetailView:
     gate: float  # 0..1; для drum — 0.0 («—»)
     voicing: str  # "1-4-7"; drum/cc_only — ""
     density: float | None  # 0..1; None → «—»
-    mutate: float  # 0..1 (0 = frozen)
     color: int = 0  # BGR565 — полоса слева в body
     degrees: tuple[int, ...] = ()  # целевая прогрессия (ступени)
     preset: str = ""  # имя пресета из PROGRESSIONS; пусто — своя
@@ -193,6 +214,7 @@ class ScreenView:
     ports: PortsView | None = None
     scale: ScaleView | None = None
     wizard: WizardView | None = None
+    versions: VersionsView | None = None  # VERSIONS (Duplicate)
     demo: DemoView | None = None  # DEMO (Note)
 
 

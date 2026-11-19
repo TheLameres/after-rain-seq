@@ -51,6 +51,7 @@ class UiState:
     wizard_profile: str | None = None
     setup_tab: int = 0  # активная суб-вкладка SETUP (индекс в SETUP_TABS)
     delete_armed: bool = False  # Delete вооружён: следующий LOWER ROW удалит
+    version_scroll: int = 0  # VERSIONS: верхняя видимая версия (страницы по 8)
     demo_top: int = 0  # DEMO: активная верхняя вкладка (E1)
     demo_bottom: int = 0  # DEMO: активная нижняя вкладка (E2)
     demo_values: tuple[int, ...] = (DEMO_VALUE_DEFAULT,) * DEMO_VALUE_COUNT

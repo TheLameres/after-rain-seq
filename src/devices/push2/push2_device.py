@@ -87,6 +87,8 @@ class Push2Device(ControllerDevice):
         # Input callbacks — stored so _on_midi_in can forward events
         self._on_pad: Callable[[int, int], None] | None = None
         self._on_button: Callable[[str, bool], None] | None = None
+        # Последнее отправленное состояние падов: note → (канал, velocity).
+        self._last_pad_states: dict[int, tuple[int, int]] = {}
         self._on_encoder: Callable[[str, int], None] | None = None
 
     # ------------------------------------------------------------------
@@ -167,8 +169,12 @@ class Push2Device(ControllerDevice):
                     self._midi_out.send(
                         MidiMessage.note_off(channel=0, note=note, velocity=0)
                     )
+                    self._midi_out.send(
+                        MidiMessage.note_off(channel=14, note=note, velocity=0)
+                    )
             except Exception as exc:
                 log.debug("Push 2 pad LED cleanup: %s", exc)
+            self._last_pad_states = {}
 
             # Turn off all button LEDs
             try:
@@ -276,6 +282,48 @@ class Push2Device(ControllerDevice):
             if cc is None:
                 continue
             self._midi_out.send(MidiMessage.cc(channel=0, control=cc, value=value))
+
+    def set_pad_leds(
+        self,
+        states: dict[int, int],
+        blinking: dict[int, int] | None = None,
+    ) -> None:
+        """Подсветка падов (note 36–99): индекс палитры → velocity note-on.
+
+        Спека «ручная мутация» §4a/§4c: статика — note-on канал 0
+        (velocity 0 = off); мигание pending — note-on канал 14
+        (quarter-период, мигает само устройство). Дифф: шлём только
+        изменившиеся ячейки; смена канала гасит старый канал note-off.
+        """
+        if self._midi_out is None:
+            return
+        blink = blinking or {}
+        notes = set(states) | set(blink) | set(self._last_pad_states)
+        for note in sorted(notes):
+            if note in blink:
+                desired: tuple[int, int] = (14, blink[note])
+            elif note in states:
+                desired = (0, states[note])
+            else:
+                desired = (0, 0)
+            if self._last_pad_states.get(note) == desired:
+                continue
+            old = self._last_pad_states.get(note)
+            if old is not None and old[0] != desired[0]:
+                self._midi_out.send(
+                    MidiMessage.note_off(channel=old[0], note=note, velocity=0)
+                )
+            if desired[1] == 0:
+                self._midi_out.send(
+                    MidiMessage.note_off(channel=desired[0], note=note, velocity=0)
+                )
+            else:
+                self._midi_out.send(
+                    MidiMessage.note_on(
+                        channel=desired[0], note=note, velocity=desired[1]
+                    )
+                )
+            self._last_pad_states[note] = desired
 
     def set_display_frame_callback(self, cb: Callable | None) -> None:
         """Wire an on_frame callback into PushDisplay (e.g. for screen emulator)."""
