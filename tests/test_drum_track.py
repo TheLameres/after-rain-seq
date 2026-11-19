@@ -133,7 +133,7 @@ def test_steps_32():
     events = dt.generate()
     assert len(events) == 2
     assert events[0].beat == 0.0
-    assert events[1].beat == pytest.approx(2.0)  # шаг 16 при 32 шагах = 2 такта
+    assert events[1].beat == pytest.approx(4.0)  # шаг 16 × 0.25 = середина цикла (8 битов)
 
 
 def test_steps_16_default():
@@ -162,76 +162,20 @@ def test_root_scale_no_effect():
 # ---------------------------------------------------------------------------
 
 
-def test_mutate_zero_no_change():
-    """mutate=0 → паттерн не меняется."""
+def test_apply_mutation_changes_pattern():
+    """Шаг мутации (_apply_mutation) меняет хотя бы один lane.
+
+    Автономного таймера больше нет: применение — только по явному запросу
+    (MutationEngine, граница цикла). Счётчик ведёт движок через историю
+    версий (spec §7), сам шаг его не трогает.
+    """
     dt = DrumTrack(name="Drum 1")
-    dt.mutate = 0.0
     dt.lanes[0].pattern[0] = 1
-    pattern_before = list(dt.lanes[0].pattern)
-    # Прошло достаточно времени
-    dt.maybe_mutate(current_beat=1000.0, bpm=120.0)
-    assert dt.lanes[0].pattern == pattern_before
-
-
-def test_mutate_applies():
-    """mutate>0 → паттерн меняется после интервала."""
-    dt = DrumTrack(name="Drum 1")
-    dt.mutate = 1.0
-    dt.maybe_mutate(0.0, bpm=120.0)
-    # Запоминаем все паттерны
-    all_before = [list(lane.pattern) for lane in dt.lanes]
-
-    # Должно быть применено
-    result = dt.maybe_mutate(current_beat=1000.0, bpm=120.0)
-    assert result is True
-    # Хотя бы один lane изменился
-    all_after = [list(lane.pattern) for lane in dt.lanes]
-    assert all_before != all_after
-
-
-def test_mutate_not_before_interval():
-    """Мутация не применяется раньше интервала."""
-    dt = DrumTrack(name="Drum 1")
-    dt.mutate = 1.0
-    dt.maybe_mutate(0.0, bpm=120.0)
-    # current_beat=0, next_mutation_beat > 0
-    result = dt.maybe_mutate(current_beat=0.0, bpm=120.0)
-    assert result is False
-
-
-def test_mutation_count():
-    """Счётчик мутаций растёт."""
-    dt = DrumTrack(name="Drum 1")
-    dt.mutate = 1.0
-    dt.maybe_mutate(0.0, bpm=120.0)
+    before = [list(lane.pattern) for lane in dt.lanes]
+    dt._apply_mutation()
+    after = [list(lane.pattern) for lane in dt.lanes]
+    assert before != after
     assert dt.mutation_count == 0
-    dt.maybe_mutate(current_beat=1000.0, bpm=120.0)
-    assert dt.mutation_count > 0
-
-
-def test_freeze_resets():
-    """freeze() сбрасывает счётчик и запоминает паттерн."""
-    dt = DrumTrack(name="Drum 1")
-    dt.mutate = 1.0
-    dt.maybe_mutate(0.0, bpm=120.0)
-    dt.lanes[0].pattern[0] = 1
-    dt.maybe_mutate(current_beat=1000.0, bpm=120.0)
-    assert dt.mutation_count > 0
-    dt.freeze()
-    assert dt.mutation_count == 0
-    # Паттерн сохранён
-    assert dt.lanes[0].pattern[0] == 1
-
-
-def test_mutation_interval_in_seconds():
-    """Интервал мутации — в секундах: 8–16 с при темпе, переданном в maybe_mutate."""
-    dt = DrumTrack(name="Drum 1")
-    dt.mutate = 1.0
-    dt.maybe_mutate(0.0, bpm=60.0)
-    dt.maybe_mutate(7.9, bpm=60.0)
-    assert dt.mutation_count == 0
-    dt.maybe_mutate(16.1, bpm=60.0)
-    assert dt.mutation_count > 0
 
 
 def test_sources_blocked():
@@ -277,19 +221,6 @@ def test_outbox_cleared():
     assert dt.outbox == []
 
 
-def test_freeze_sets_mutate_zero():
-    """Regression §4.3: DrumTrack.freeze() must stop mutation, not only reset counter."""
-    dt = DrumTrack(name="Drum 1")
-    dt.mutate = 1.0
-    dt.maybe_mutate(0.0, bpm=120.0)
-    dt.freeze()
-    assert dt.mutate == 0.0
-    dt.lanes[0].pattern[0] = 1
-    for beat in range(1000, 21000):
-        dt.maybe_mutate(current_beat=float(beat), bpm=120.0)
-    assert dt.mutation_count == 0
-
-
 def test_generate_publishes_to_outbox():
     """§4.5: drum-события попадают в outbox, current()/history() работают."""
     dt = DrumTrack(name="Drum 1")
@@ -301,3 +232,54 @@ def test_generate_publishes_to_outbox():
     assert dt.current() is not None
     assert dt.current().beat == 2.0
     assert len(dt.history(1.0)) == 1
+
+
+# ---------------------------------------------------------------------------
+# resolve_lane: адресация индексом / GM-номером / именем (design §6)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveLane:
+    def test_by_index(self):
+        dt = DrumTrack(name="Drum 1")
+        assert dt.resolve_lane("0") == 0
+        assert dt.resolve_lane("15") == 15
+
+    def test_by_gm_number(self):
+        dt = DrumTrack(name="Drum 1")
+        assert dt.resolve_lane("36") == 0
+        assert dt.resolve_lane("51") == 15
+        assert dt.resolve_lane("42") == 6  # ClosedHat
+
+    def test_by_name_case_insensitive(self):
+        dt = DrumTrack(name="Drum 1")
+        assert dt.resolve_lane("kick") == 0
+        assert dt.resolve_lane("Kick") == 0
+        assert dt.resolve_lane("KICK") == 0
+        assert dt.resolve_lane("snare") == 2
+
+    def test_criterion_all_forms_equal(self):
+        """Критерий задачи: kick == Kick == "36" == 0."""
+        dt = DrumTrack(name="Drum 1")
+        assert dt.resolve_lane("kick") == dt.resolve_lane("Kick")
+        assert dt.resolve_lane("Kick") == dt.resolve_lane("36")
+        assert dt.resolve_lane("36") == 0
+
+    def test_number_outside_both_ranges_is_error(self):
+        dt = DrumTrack(name="Drum 1")
+        with pytest.raises(ValueError, match="вне диапазонов"):
+            dt.resolve_lane("20")
+        with pytest.raises(ValueError, match="вне диапазонов"):
+            dt.resolve_lane("-3")
+        with pytest.raises(ValueError, match="вне диапазонов"):
+            dt.resolve_lane("52")
+
+    def test_unknown_name_is_error(self):
+        dt = DrumTrack(name="Drum 1")
+        with pytest.raises(ValueError, match="не индекс"):
+            dt.resolve_lane("cowbellissimo")
+
+    def test_step_to_note_unchanged(self):
+        """Переименование GM-карты не изменило step_to_note."""
+        assert DrumTrack.step_to_note(0) == 36
+        assert DrumTrack.step_to_note(15) == 51
