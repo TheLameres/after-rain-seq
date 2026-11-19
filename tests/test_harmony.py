@@ -3,6 +3,7 @@
 import pytest
 
 from src.harmony import Harmony, HarmonyError
+from src.harmony.scales import resolve_scale
 
 # ---------------------------------------------------------------------------
 # Инициализация и свойства
@@ -90,6 +91,49 @@ def test_rejected_scale_does_not_change_state():
         h.set_scale("wholetone")
     assert h.scale_name == "dorian"
     assert h.root == "A"
+
+
+# ---------------------------------------------------------------------------
+# Таблица ладов: алиасы ionian/maj7 и резолвинг имён
+# ---------------------------------------------------------------------------
+
+
+def test_alias_ionian_gives_major_semitones():
+    h = Harmony("C", "ionian")
+    assert h.semitones == (0, 2, 4, 5, 7, 9, 11)
+    assert h.scale_name == "ionian"
+
+
+def test_alias_maj7_gives_mixolydian_semitones():
+    h = Harmony("C", "maj7")
+    assert h.semitones == (0, 2, 4, 5, 7, 9, 10)
+    assert h.scale_name == "maj7"
+
+
+@pytest.mark.parametrize(
+    ("alias", "canonical"), [("ionian", "major"), ("maj7", "mixolydian")]
+)
+def test_alias_matches_canonical_resolution(alias, canonical):
+    # Алиас задаёт тот же лад: полутона и резолвинг ступеней (включая
+    # отрицательные и перенос октавы, сетка -7..+21) совпадают 1:1.
+    base = Harmony("A", canonical)
+    aliased = Harmony("A", alias)
+    assert aliased.semitones == base.semitones
+    for degree in range(-7, 22):
+        assert aliased.degree_to_semitone(degree) == base.degree_to_semitone(degree)
+
+
+def test_set_scale_accepts_aliases():
+    h = Harmony()
+    h.set_scale("ionian")
+    assert h.semitones == (0, 2, 4, 5, 7, 9, 11)
+    h.set_scale("maj7")
+    assert h.semitones == (0, 2, 4, 5, 7, 9, 10)
+
+
+def test_resolve_scale_unknown_name_raises():
+    with pytest.raises(ValueError):
+        resolve_scale("no_such_scale")
 
 
 # ---------------------------------------------------------------------------
