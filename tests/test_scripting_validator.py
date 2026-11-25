@@ -252,3 +252,42 @@ class TestCaptureFacade:
     def test_capture_stop_too_many_positional(self) -> None:
         messages = _messages("session.capture_stop('x.mid')\n")
         assert any("too many positional arguments" in m for m in messages)
+
+
+class TestTrackChainFacade:
+    """track_chain* — валидатор подхватывает методы рефлексией (5.3).
+
+    ``validator.py`` не меняется: таблица методов строится
+    ``inspect.signature(ScriptSession)``, новые обёртки попадают в линт
+    арности автоматически.
+    """
+
+    def test_valid_calls_pass(self) -> None:
+        source = (
+            "session.show_track_chain('Pad 1')\n"
+            "session.track_chain_add('Pad 1', 'arpeggiate step=0.25')\n"
+            "session.track_chain_remove('Pad 1', 1)\n"
+        )
+        assert _validate(source) == []
+
+    def test_show_with_fatal_kwarg_passes(self) -> None:
+        assert _validate("session.show_track_chain('Pad 1', fatal=False)\n") == []
+
+    def test_missing_argument(self) -> None:
+        """Один аргумент вместо двух — diagnostic до исполнения."""
+        messages = _messages("session.track_chain_add('Pad 1')\n")
+        assert len(messages) == 1
+        assert "missing required argument" in messages[0]
+        assert "needs 2" in messages[0]
+
+    def test_too_many_positional(self) -> None:
+        messages = _messages("session.track_chain_add('a', 'b', 'c')\n")
+        assert any("too many positional arguments" in m for m in messages)
+
+    def test_unknown_keyword(self) -> None:
+        messages = _messages("session.track_chain_add(name='a', spec='b', stage='c')\n")
+        assert any("unknown keyword" in m for m in messages)
+
+    def test_remove_missing_index(self) -> None:
+        messages = _messages("session.track_chain_remove('Pad 1')\n")
+        assert any("missing required argument" in m for m in messages)

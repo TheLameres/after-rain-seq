@@ -57,6 +57,11 @@ class DrumEngine:
         self._fingerprint: (
             tuple[tuple[tuple[int, ...], ...], tuple[bool, ...]] | None
         ) = None
+        # Цепочка модификаций (track-modify-chain): drum-дорожки цепочку
+        # игнорируют, но непустая цепочка — неожиданное состояние модели
+        # (защита для прямого присвоения; через фасад недостижимо), поэтому
+        # предупреждение в лог — однократно на дорожку.
+        self._chain_warned: bool = False
 
     # ------------------------------------------------------------------
     # Публичный API
@@ -110,6 +115,15 @@ class DrumEngine:
         Returns:
             Количество событий, положенных в очередь.
         """
+        # Цепочка модификаций (track-modify-chain): drum-дорожки цепочку
+        # игнорируют; непустая цепочка — предупреждение однократно на дорожку.
+        if self._track.chain and not self._chain_warned:
+            self._chain_warned = True
+            log.warning(
+                "DrumEngine %s: непустая цепочка модификаций игнорируется "
+                "(drum-дорожки цепочку не поддерживают)",
+                self._track.name,
+            )
         self._detect_pattern_change(current_beat)
         if self._port_label is None:
             return 0

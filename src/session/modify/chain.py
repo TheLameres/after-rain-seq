@@ -11,8 +11,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Protocol
 
 
@@ -21,14 +20,17 @@ class StageContext:
     """Всё, что этап может знать о текущем тике, кроме самих событий.
 
     Атрибуты:
-        beat: Абсолютная позиция на таймлайне, в beats.
-        bpm: Текущий темп.
+        beat: Фаза паттерна — начало текущего цикла (абсолютный beat,
+            ``self._origin`` движка). Движок передаёт именно начало цикла,
+            а не позицию текущего тика.
+        bpm: Текущий темп. Дефолт 0.0: темп не подключён; движок не читает
+            клок, этапы не используют.
         track_name: Имя дорожки, для которой идёт обработка.
     """
 
     beat: float
-    bpm: float
-    track_name: str
+    bpm: float = 0.0
+    track_name: str = ""
 
 
 class Stage[T](Protocol):
@@ -46,7 +48,7 @@ class Stage[T](Protocol):
     def process(self, batch: list[T], ctx: StageContext) -> list[T]: ...
 
 
-@dataclass
+@dataclass(frozen=True)
 class Chain[T]:
     """Упорядоченный набор этапов. Пустая цепочка — тождество.
 
@@ -54,7 +56,12 @@ class Chain[T]:
         stages: Этапы в порядке выполнения.
     """
 
-    stages: Sequence[Stage[T]] = field(default_factory=tuple)
+    stages: tuple[Stage[T], ...] = ()
+
+    def __post_init__(self) -> None:
+        # Нормализация к tuple: Chain() == Chain([]) == Chain(()) — конструктор
+        # принимает любой Sequence, хранить нужно неизменяемый срез.
+        object.__setattr__(self, "stages", tuple(self.stages))
 
     def process(self, batch: list[T], ctx: StageContext) -> list[T]:
         """Прогнать список через все этапы.

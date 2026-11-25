@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from src.session.events.note_event import NoteEvent
 from src.session.model.pattern_spec import (
     FAMILY_CC_ONLY,
     FAMILY_CHORD_SLICER,
@@ -18,6 +19,7 @@ from src.session.model.pattern_spec import (
     FAMILY_FREE_MONO,
     PatternSpec,
 )
+from src.session.modify.chain import Chain
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +46,8 @@ class MelodicProfile:
             (cc_filter, cc_space).
         pattern: Спецификация генерации паттерна (C6) — как профиль
             порождает ноты: семейство, сетка, громкости, разреженность.
+        chain: Цепочка модификаций по умолчанию; дефолт реестра — пустая
+            (тождество).
     """
 
     name: str
@@ -54,6 +58,7 @@ class MelodicProfile:
     default_gate: float
     cc_only: bool = False
     pattern: PatternSpec = field(default_factory=_default_pattern)
+    chain: Chain[NoteEvent] = field(default_factory=Chain)
 
 
 PROFILES: dict[str, MelodicProfile] = {

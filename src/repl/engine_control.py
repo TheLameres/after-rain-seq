@@ -14,7 +14,7 @@ REPL не должен ронять цикл по исключению кома�
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from src.core.engine_result import EngineResult
 from src.repl.status import StatusSnapshot, TrackSummary
@@ -199,6 +199,24 @@ class EngineControl(ABC):
         не ломаются).
         """
         return EngineResult.fail("drum pattern is not supported by this control")
+
+    # ------------------------------------------------------------------
+    # Цепочка модификаций (track-modify-chain)
+    # ------------------------------------------------------------------
+
+    def track_chain(self, name: str) -> EngineResult:
+        """Показать цепочку модификаций дорожки. По умолчанию не поддерживается."""
+        return EngineResult.fail("track chain is not supported by this control")
+
+    def track_chain_add(
+        self, name: str, stage_name: str, params: Mapping[str, str]
+    ) -> EngineResult:
+        """Добавить этап в конец цепочки дорожки. По умолчанию не поддерживается."""
+        return EngineResult.fail("track chain is not supported by this control")
+
+    def track_chain_remove(self, name: str, index: int) -> EngineResult:
+        """Удалить этап цепочки по 1-based индексу. По умолчанию не поддерживается."""
+        return EngineResult.fail("track chain is not supported by this control")
 
     # ------------------------------------------------------------------
     # Захват SMF (add-capture-smf)

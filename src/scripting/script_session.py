@@ -23,6 +23,7 @@ from src.core.engine_result import EngineResult
 from src.core.proposal import DrumProposal, TrackProposal
 from src.repl.engine_control import EngineControl
 from src.scripting.error import ScriptError
+from src.session.modify.stage_registry import parse_stage_spec
 
 log = logging.getLogger(__name__)
 
@@ -247,6 +248,59 @@ class ScriptSession:
         в историю версий (design §7).
         """
         return self._call("set_drum_pattern", (name, lane, pattern), fatal=fatal)
+
+    # ------------------------------------------------------------------
+    # Цепочка модификаций (track-modify-chain)
+    # ------------------------------------------------------------------
+
+    def show_track_chain(self, name: str, *, fatal: bool = True) -> EngineResult:
+        """Показать цепочку модификаций дорожки (``EngineControl.track_chain``).
+
+        Контракт данных: ``data["chain"]`` — список этапов-строк-спецификаций
+        (``format_stage``, например ``"arpeggiate step=0.25 direction=up"``),
+        пустая цепочка — пустой список. Скрипт ветвится по
+        ``len(result.data["chain"])``.
+        """
+        return self._call("track_chain", (name,), fatal=fatal)
+
+    def track_chain_add(
+        self, name: str, spec: str, *, fatal: bool = True
+    ) -> EngineResult:
+        """Добавить этап в конец цепочки дорожки строкой-спецификацией.
+
+        Спецификация ``"имя [ключ=значение ...]"`` парсится реестром
+        этапов (``parse_stage_spec``): ``ValueError`` ⇒ ``EngineResult.fail``
+        (при ``fatal=True`` — ``ScriptError``). Контракт данных:
+        ``data["stage"]`` — спецификация добавленного этапа,
+        ``data["chain"]`` — итоговая цепочка.
+
+        Аргументы:
+            name: Имя дорожки.
+            spec: Спецификация этапа, например
+                ``"arpeggiate step=0.25 direction=up"``.
+            fatal: Бросать ли ``ScriptError`` при ошибке.
+
+        Returns:
+            ``EngineResult`` фасадного ``track_chain_add``.
+        """
+        try:
+            stage_name, params = parse_stage_spec(spec)
+        except ValueError as exc:
+            failed = EngineResult.fail(f"{exc}")
+            if fatal:
+                raise ScriptError(failed.message) from None
+            return failed
+        return self._call("track_chain_add", (name, stage_name, params), fatal=fatal)
+
+    def track_chain_remove(
+        self, name: str, index: int, *, fatal: bool = True
+    ) -> EngineResult:
+        """Удалить этап цепочки по порядковому номеру (с единицы).
+
+        Обёртка 1:1 над ``EngineControl.track_chain_remove``. Контракт
+        данных: ``data["chain"]`` — итоговая цепочка.
+        """
+        return self._call("track_chain_remove", (name, index), fatal=fatal)
 
     # ------------------------------------------------------------------
     # Порты

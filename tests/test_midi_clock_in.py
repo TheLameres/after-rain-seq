@@ -473,18 +473,7 @@ class TestMutationRestart:
         assert st.mutation_count == 1
 
     def test_restart_keeps_count(self) -> None:
-        from src.session.mutation.mutation_engine import MutationEngine
-
-        me = MutationEngine()
-        me.register_track("L", "lead", degrees=[0, 2, 4])
-        me.request_mutation("L", cycle_beats=4.0)
-        me.tick(0.0)
-        me.tick(4.0)  # мутация сработала
-        assert me.get_state("L").mutation_count == 1  # type: ignore[union-attr]
-        me.restart()
-        assert me.get_state("L").mutation_count == 1  # type: ignore[union-attr]
-
-    def test_restart_keeps_count(self) -> None:
+        """Restart: счётчик мутаций сохраняется (сбрасываются drum-движки)."""
         from src.session.mutation.mutation_engine import MutationEngine
 
         me = MutationEngine()

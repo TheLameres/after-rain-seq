@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.session.modify.densify import DensifyStage
+import pytest
 
-from src.session.engine.generators import _density_keep
+from src.session.model.density import density_keep
 from src.session.modify import Chain, StageContext
+from src.session.modify.densify import DensifyStage
 
 CTX = StageContext(beat=0.0, bpm=120.0, track_name="Pad 1")
 
@@ -15,6 +16,9 @@ CTX = StageContext(beat=0.0, bpm=120.0, track_name="Pad 1")
 @dataclass
 class N:
     beat: float
+    # Arpeggiate делает replace(note, duration=step): поле нужно контракту
+    # этапа, хотя ассерты смотрят только на beat.
+    duration: float = 0.0
 
 
 def _notes(n: int = 8) -> list[N]:
@@ -42,7 +46,7 @@ class TestDensifyMatchesGenerator:
 
     def test_partial_density_matches_generator(self) -> None:
         for d in (0.0, 0.25, 0.5, 0.75):
-            expected = [i for i in range(8) if _density_keep(i, d)]
+            expected = [i for i in range(8) if density_keep(i, d)]
             got = [int(n.beat) for n in Chain([DensifyStage(d)]).process(_notes(), CTX)]
             assert got == expected, f"density={d}"
 
@@ -50,6 +54,20 @@ class TestDensifyMatchesGenerator:
         for d in (0.0, 0.1, 0.5):
             out = Chain([DensifyStage(d)]).process(_notes(), CTX)
             assert any(n.beat == 0.0 for n in out), f"density={d}"
+
+
+class TestDensifyValidation:
+    """Валидация density: 0.0–1.0, иначе ValueError."""
+
+    @pytest.mark.parametrize("density", [-0.1, 1.1])
+    def test_out_of_range_raises(self, density: float) -> None:
+        with pytest.raises(ValueError, match="density"):
+            DensifyStage(density)
+
+    @pytest.mark.parametrize("density", [0.0, 1.0])
+    def test_bounds_are_valid(self, density: float) -> None:
+        stage = DensifyStage(density)
+        assert stage.density == density
 
 
 class TestDensifyIgnoresNeighbours:
@@ -62,7 +80,7 @@ class TestDensifyIgnoresNeighbours:
             _notes(), CTX
         )
         # Для чётных шагов решение то же, что генератор принял бы на тех же позициях
-        expected = [i for i in range(0, 8, 2) if _density_keep(i, d)]
+        expected = [i for i in range(0, 8, 2) if density_keep(i, d)]
         assert [int(n.beat) for n in after_drop] == expected
         assert set(expected) <= set(alone)
 
@@ -88,12 +106,48 @@ class TestDensifyDeterminism:
         assert [n.beat for n in src] == [float(i) for i in range(8)]
 
 
+class TestDensifyAfterArpeggiate:
+    """Документированный контракт: Densify — до этапов, дробящих время.
+
+    После Arpeggiate все ноты получают дробные биты внутри целого такта
+    и схлопываются в один индекс — решение по ``int(beat)`` деградирует
+    (все ноты первого такта получают index 0 и сохраняются как акцент).
+    Этап не запрещает такой порядок, но контракт требует ставить Densify
+    раньше. Тест фиксирует точный snapshot выживших нот.
+    """
+
+    def _chain_output(self) -> list[N]:
+        from src.session.modify.arpeggiate import ArpeggiateStage
+
+        chord = [N(0.0), N(0.0), N(0.0), N(0.0)]
+        chain = Chain([ArpeggiateStage(step=0.25), DensifyStage(0.0)])
+        return chain.process(chord, CTX)
+
+    def test_arpeggio_expands_chord(self) -> None:
+        out = self._chain_output()
+        # Арпеджио разворачивается: 4 ноты на 0 / 0.25 / 0.5 / 0.75.
+        assert [n.beat for n in out] == [0.0, 0.25, 0.5, 0.75]
+
+    def test_densify_decision_on_collapsed_indices(self) -> None:
+        out = self._chain_output()
+        # Все ноты первого такта схлопываются в index 0 → сохраняются
+        # как акцент (шаг 0 не удаляется никогда).
+        assert len(out) == 4
+        assert [n.beat for n in out] == [0.0, 0.25, 0.5, 0.75]
+
+    def test_deterministic_between_runs(self) -> None:
+        first = self._chain_output()
+        second = self._chain_output()
+        assert first == second
+
+
 class TestNotYetWired:
     """Densify НЕ подключён к движку: генератор уже прореживает по density.
 
     Подключение без переноса прореживания из генератора дало бы двойное
     прореживание (pad d=0.5: 12 -> 9 вместо 12 -> 6). Этот тест фиксирует
-    текущее состояние, чтобы подключение не произошло молча.
+    текущее состояние, чтобы подключение не произошло молча. DEN остаётся
+    в генераторе, DensifyStage в цепочке — отдельный механизм.
     """
 
     def test_generator_already_thins_by_density(self) -> None:
@@ -102,4 +156,10 @@ class TestNotYetWired:
         from src.session.engine import generators
 
         source = inspect.getsource(generators)
-        assert "_density_keep(i, track.density)" in source
+        assert "density_keep(i, track.density)" in source
+
+    def test_private_density_keep_removed_from_generators(self) -> None:
+        """Приватный кросс-модульный импорт устранён."""
+        from src.session import engine
+
+        assert not hasattr(engine.generators, "_density_keep")

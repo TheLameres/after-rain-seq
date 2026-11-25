@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +28,8 @@ from src.session.model.drum_track import DrumTrack
 from src.session.model.melodic_profile import PROFILES
 from src.session.model.melodic_track import MAX_OCTAVE, MelodicTrack
 from src.session.model.track import Track
+from src.session.modify.chain import Chain
+from src.session.modify.stage_registry import build_stage, format_stage
 from src.session.mutation.mutation_engine import MutationEngine
 from src.session.session import Session
 from src.sync.capture_recorder import CaptureRecorder
@@ -484,6 +486,114 @@ class AppEngineControl(EngineControl):
             return EngineResult.fail(f"density must be 0..1, got {density}")
         track.density = float(density)
         return EngineResult.ok(f'track "{name}": density = {density:.2f}')
+
+    # ------------------------------------------------------------------
+    # Цепочка модификаций (track-modify-chain)
+    # ------------------------------------------------------------------
+
+    def _session_track_for_chain(self, name: str) -> Track | EngineResult:
+        """Дорожка сессии по имени или результат с ошибкой."""
+        session = self._app.session
+        if session is None:
+            return EngineResult.fail("session not available")
+        track = session.get_track(name)
+        if track is None:
+            return EngineResult.fail(f"track {name!r} not found")
+        return track
+
+    def _chain_texts(self, chain: Chain) -> str:
+        """Этапы цепочки как строка-спецификация через « → »."""
+        if not chain.stages:
+            return "— (empty)"
+        return " → ".join(format_stage(stage) for stage in chain.stages)
+
+    def _drum_chain_notice(self, name: str) -> EngineResult:
+        """Успешный результат с предупреждением для drum-дорожки.
+
+        Движок drum-дорожек цепочку игнорирует: спецификация не применяется,
+        цепочка остаётся пустой. Единое поведение фасада для REPL и скриптов.
+        """
+        return EngineResult.ok(
+            f'track "{name}": drum — цепочка игнорируется '
+            "(спецификация не применена)",
+            chain=[],
+        )
+
+    def track_chain(self, name: str) -> EngineResult:
+        """Показать цепочку модификаций дорожки.
+
+        Melodic-дорожка: ``track "X": chain = <этапы>`` или
+        ``chain = — (empty)``. Drum-дорожка: успешный результат с
+        предупреждением, спецификация не применяется.
+        """
+        track = self._session_track_for_chain(name)
+        if isinstance(track, EngineResult):
+            return track
+        if isinstance(track, DrumTrack):
+            return self._drum_chain_notice(name)
+        chain: Chain = track.chain
+        texts = [format_stage(stage) for stage in chain.stages]
+        return EngineResult.ok(
+            f'track "{name}": chain = {self._chain_texts(chain)}',
+            chain=texts,
+        )
+
+    def track_chain_add(
+        self, name: str, stage_name: str, params: Mapping[str, str]
+    ) -> EngineResult:
+        """Добавить этап в конец цепочки дорожки.
+
+        Drum-дорожка: успешный результат с предупреждением, спецификация
+        не применяется. Melodic-дорожка: ``build_stage`` (``ValueError`` →
+        fail), присвоение через fail-fast сеттер, итоговая цепочка в
+        сообщении и структурированных данных.
+        """
+        track = self._session_track_for_chain(name)
+        if isinstance(track, EngineResult):
+            return track
+        if isinstance(track, DrumTrack):
+            return self._drum_chain_notice(name)
+        try:
+            stage = build_stage(stage_name, params)
+        except ValueError as exc:
+            return EngineResult.fail(f"track {name!r}: {exc}")
+        new_chain = Chain(track.chain.stages + (stage,))
+        track.chain = new_chain
+        stage_spec = format_stage(stage)
+        texts = [format_stage(stage) for stage in new_chain.stages]
+        return EngineResult.ok(
+            f'track "{name}": chain = {self._chain_texts(new_chain)}',
+            stage=stage_spec,
+            chain=texts,
+        )
+
+    def track_chain_remove(self, name: str, index: int) -> EngineResult:
+        """Удалить этап цепочки по 1-based индексу.
+
+        Drum-дорожка: успешный результат с предупреждением, спецификация
+        не применяется. Melodic-дорожка: индекс вне 1..len — ошибка,
+        пересборка ``Chain`` без удалённого этапа.
+        """
+        track = self._session_track_for_chain(name)
+        if isinstance(track, EngineResult):
+            return track
+        if isinstance(track, DrumTrack):
+            return self._drum_chain_notice(name)
+        chain: Chain = track.chain
+        if not 1 <= index <= len(chain.stages):
+            return EngineResult.fail(
+                f'track "{name}": stage index {index} out of range '
+                f"1..{len(chain.stages)}"
+            )
+        stages = list(chain.stages)
+        del stages[index - 1]
+        new_chain = Chain(tuple(stages))
+        track.chain = new_chain
+        texts = [format_stage(stage) for stage in new_chain.stages]
+        return EngineResult.ok(
+            f'track "{name}": chain = {self._chain_texts(new_chain)}',
+            chain=texts,
+        )
 
     # ------------------------------------------------------------------
     # Ручная мутация (spec «ручная мутация и линейная история», §3–§8)

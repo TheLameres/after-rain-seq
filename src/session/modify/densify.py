@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.session.engine.generators import _density_keep
+from src.session.events.note_event import NoteEvent
+from src.session.model.density import density_keep
 from src.session.modify.chain import StageContext
 
 
@@ -18,15 +19,39 @@ from src.session.modify.chain import StageContext
 class DensifyStage:
     """Оставляет долю событий, заданную плотностью 0..1.
 
+    Контракт: **Densify — до этапов, дробящих время** (арпеджиатор, будущие
+    транспозиции времени). Решение по ``int(e.beat)`` осмысленно только на
+    сетке целых битов: после ``ArpeggiateStage`` ноты получают дробные биты
+    внутри целого такта и схлопываются в один индекс — решение деградирует.
+    Этап не запрещает такой порядок, но контракт требует ставить Densify
+    раньше.
+
     Атрибуты:
         density: Плотность 0.0–1.0. 1.0 — без прореживания.
             Шаг с позицией ``beat == 0`` (акцент) не удаляется никогда.
+        name: Имя этапа для ``Chain.names``.
     """
 
     density: float
     name: str = "densify"
 
-    def process(self, batch: list, ctx: StageContext) -> list:
+    def __post_init__(self) -> None:
+        if not (0.0 <= self.density <= 1.0):
+            raise ValueError(
+                f"Densify: density должна быть в диапазоне 0.0–1.0, "
+                f"получено {self.density}"
+            )
+
+    def process(self, batch: list[NoteEvent], ctx: StageContext) -> list[NoteEvent]:
+        """Проредить список событий по позиции шага.
+
+        Args:
+            batch: События дорожки; используется поле ``beat``.
+            ctx: Контекст тика (этап его не использует).
+
+        Returns:
+            Новый список выживших событий.
+        """
         if self.density >= 1.0:
             return list(batch)
-        return [e for e in batch if _density_keep(int(e.beat), self.density)]
+        return [e for e in batch if density_keep(int(e.beat), self.density)]

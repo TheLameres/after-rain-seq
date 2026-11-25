@@ -33,6 +33,7 @@ from src.session.engine.generators import (
 from src.session.events.note_event import NoteEvent
 from src.session.model.melodic_track import MelodicTrack
 from src.session.model.pattern_spec import FAMILY_CHORD_SOURCE, FAMILY_FREE_MONO
+from src.session.modify.chain import Chain, StageContext
 from src.sync.transport_event import TransportEvent
 
 if TYPE_CHECKING:
@@ -70,6 +71,9 @@ class MelodicEngine:
         # B2: фаза паттерна и сетки ступеней. Сдвигается только при применении
         # отложенной прогрессии (на границе ступени).
         self._origin: float = 0.0
+        # Цепочка модификаций (track-modify-chain): версия цепочки, по которой
+        # построен текущий горизонт. При замене подхватывается со следующего тика.
+        self._chain_seen: Chain[NoteEvent] | None = None
 
     # ------------------------------------------------------------------
     # Публичный API
@@ -124,6 +128,23 @@ class MelodicEngine:
         self._scheduler.ensure(current_beat)
         if self._track.pending_degrees is not None:
             self._apply_pending_at(current_beat)
+        # Цепочка модификаций (track-modify-chain): замена подхватывается
+        # со следующего тика, без квантизации на границу ступени. Уже
+        # запланированные вперёд ноты старой цепочки снимаются и
+        # перестраиваются по новой цепочке; уже звучащие ноты доигрывают
+        # (note-off не трогаются — тот же механизм, что у отложенной
+        # прогрессии B2). Счётчик ревизий дорожки не трогается.
+        if self._track.chain is not self._chain_seen:
+            cancelled = self._scheduler.cancel_from(current_beat)
+            if self._scheduler.watermark > current_beat + 1e-9:
+                self._scheduler.rewind_to(current_beat)
+            self._chain_seen = self._track.chain
+            log.debug(
+                "MelodicEngine %s: цепочка заменена с beat %.3f (снято %d событий)",
+                self._track.name,
+                current_beat,
+                cancelled,
+            )
         self._extend_horizon(current_beat)
         # §4.6: mute дорожки не даёт звука, но горизонт и планировщик
         # продолжают идти — снятие mute возвращает дорожку в такт.
@@ -280,6 +301,12 @@ class MelodicEngine:
         ``Session.propagate_chords()`` перед тиками движков. Механизмы
         мутации — из MutationEngine (если подключён); без него дорожка
         играет базовый материал.
+
+        Цепочка модификаций (track-modify-chain) применяется к паттернному
+        outbox (NoteEvent) **единообразно для всех семейств** генераторов.
+        Chord outbox (ChordEvent в ``track.outbox``) и копии
+        ``inject_sources`` не трогаются: они питают граф гармонии
+        (``propagate_chords``) и окно слайсеров.
         """
         me = self._mutation_engine
         name = self._track.name
@@ -290,7 +317,12 @@ class MelodicEngine:
             euclidean=me.get_euclidean_drift(name) if me else None,
             param_drift=me.get_param_drift(name) if me else None,
         )
-        return generate_notes(ctx), pattern_length_for(ctx)
+        notes = generate_notes(ctx)
+        chain = self._track.chain
+        if chain:
+            stage_ctx = StageContext(beat=self._origin, track_name=self._track.name)
+            notes = chain.process(notes, stage_ctx)
+        return notes, pattern_length_for(ctx)
 
     def _note_to_events(self, note: NoteEvent, abs_beat: float) -> list[TransportEvent]:
         """NoteEvent → пара TransportEvent (note_on + note_off).

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
+from src.session.events.note_event import NoteEvent
 from src.session.modify.chain import StageContext
 
 DIRECTIONS: tuple[str, ...] = ("up", "down", "updown")
@@ -55,23 +56,26 @@ class ArpeggiateStage:
                 f"ожидалось одно из {DIRECTIONS}"
             )
 
-    def process(self, batch: list, ctx: StageContext) -> list:
+    def process(self, batch: list[NoteEvent], ctx: StageContext) -> list[NoteEvent]:
         """Развернуть аккорды в арпеджио.
 
         Args:
-            batch: События дорожки; ожидаются поля ``beat``, ``degree``,
-                ``duration`` и ``velocity``.
+            batch: События дорожки; ожидаются поля ``beat``, ``duration``
+                и ``velocity``. ``degree`` опционален: у события без него
+                порядок обхода считается равным 0 — этап не должен крашиться
+                на генерике Stage[T].
             ctx: Контекст тика (этап его не использует).
 
         Returns:
-            Новый список, отсортированный по ``(beat, degree)``.
-            Группы из одной ноты остаются как есть.
+            Новый список, отсортированный по ``(beat, degree)`` — при
+            отсутствии degree используется fallback 0. Группы из одной
+            ноты остаются как есть.
         """
         if len(batch) < 2:
             return list(batch)
 
         groups = self._group(batch)
-        out: list = []
+        out: list[NoteEvent] = []
         for index, (beat, notes) in enumerate(groups):
             if len(notes) < 2:
                 out.extend(notes)
@@ -88,7 +92,7 @@ class ArpeggiateStage:
                     )
                 )
 
-        out.sort(key=lambda event: (event.beat, event.degree))
+        out.sort(key=lambda event: (event.beat, getattr(event, "degree", 0)))
         return out
 
     # ------------------------------------------------------------------
@@ -96,17 +100,17 @@ class ArpeggiateStage:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _group(batch: list) -> list[tuple[float, list]]:
+    def _group(batch: list[NoteEvent]) -> list[tuple[float, list[NoteEvent]]]:
         """Сгруппировать события по позиции, сохранив порядок по времени."""
-        buckets: dict[float, list] = {}
-        for event in sorted(batch, key=lambda e: (e.beat, e.degree)):
+        buckets: dict[float, list[NoteEvent]] = {}
+        for event in sorted(batch, key=lambda e: (e.beat, getattr(e, "degree", 0))):
             key = round(event.beat, _BEAT_PRECISION)
             buckets.setdefault(key, []).append(event)
         return sorted(buckets.items())
 
-    def _order(self, notes: list) -> list:
+    def _order(self, notes: list[NoteEvent]) -> list[NoteEvent]:
         """Упорядочить ноты аккорда по выбранному направлению."""
-        ascending = sorted(notes, key=lambda n: n.degree)
+        ascending = sorted(notes, key=lambda n: getattr(n, "degree", 0))
         if self.direction == "up":
             return ascending
         if self.direction == "down":

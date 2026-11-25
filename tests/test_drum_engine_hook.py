@@ -49,9 +49,9 @@ class _Cfg:
     swing_amount = 0.0
 
 
-def _app_with_drum() -> tuple[
-    App, DrumEngine, DrumTrack, queue.Queue[TransportEvent], CaptureRecorder
-]:
+def _app_with_drum() -> (
+    tuple[App, DrumEngine, DrumTrack, queue.Queue[TransportEvent], CaptureRecorder]
+):
     """App с хуком тиков и одной drum-дорожкой (kick на бите 0 цикла)."""
     app = App(config_path="config.yaml", simulate=True)
     app._session = Session()
@@ -107,17 +107,19 @@ class TestDrumEngineStartStopHook:
         proxy = _app._tick_proxy
         proxy._dispatch(TickEvent.START)
         _run_ticks(proxy, 33)
+        # CaptureRecorder append-only: срезаем записи до рестарта — первый
+        # прогон уже сыграл свой kick на бите 0.
+        before = len(recorder.entries())
         proxy._dispatch(TickEvent.STOP)
         proxy._dispatch(TickEvent.START)
         # Первый тик после START: kick на бите 0, без «доигрывания прошлого».
         proxy._dispatch(TickEvent.TICK)
-        ons = [
-            e
-            for e in recorder.entries()
-            if e.kind is EventKind.NOTE_ON and e.note == 36
-        ]
+        fresh = recorder.entries()[before:]
+        ons = [e for e in fresh if e.kind is EventKind.NOTE_ON and e.note == 36]
         assert len(ons) == 1
         assert ons[0].beat == pytest.approx(0.0)
+        # В новых записях нет NOTE_ON из старого окна (beat > 0).
+        assert not [e for e in fresh if e.kind is EventKind.NOTE_ON and e.beat > 0.0]
         assert engine.scheduler.pending_count > 0
 
     def test_ticks_deliver_once_per_beat(self) -> None:

@@ -176,6 +176,7 @@ def _build_repl(app: App, config_path: str):
     from src.repl.repl import Repl
     from src.session.model.drum_track import GM_DRUM_MAP
     from src.session.model.melodic_profile import PROFILES
+    from src.session.modify.stage_registry import STAGE_FACTORIES
 
     log_buffer = LogBuffer()
     attach_log_buffer(log_buffer)
@@ -189,6 +190,7 @@ def _build_repl(app: App, config_path: str):
             "profile": lambda: sorted(PROFILES),
             "scale": lambda: sorted(Voicing.HARMONIC_SCALES),
             "lane": lambda: [name for _, name in GM_DRUM_MAP],
+            "stage": lambda: sorted(STAGE_FACTORIES),
         },
     )
 

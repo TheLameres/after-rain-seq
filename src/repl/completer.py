@@ -10,6 +10,8 @@
     - ``scale <TAB>`` → 8 ладов (провайдер, см. main.py)
     - ``root <TAB>`` → 12 нот
     - ``track add <TAB>`` → профили (провайдер, см. main.py)
+    - ``track chain <TAB>`` → имена дорожек, следующий токен → действия,
+      после ``add`` → имена этапов (провайдер, см. main.py)
     - ``clock source <TAB>`` → internal/midi/link
 
 Провайдеры передаются снаружи (из main.py), чтобы ``repl/`` не импортировал
@@ -50,6 +52,9 @@ NOTES: tuple[str, ...] = (
 # Провайдер динамических дополнений: возвращает варианты по ключу.
 Provider = Callable[[], Iterable[str]]
 
+CHAIN_ACTIONS: tuple[str, ...] = ("show", "add", "remove")
+"""Действия команды ``track chain`` (порядок как в usage)."""
+
 
 class ReplCompleter(Completer):
     """Комбинированный комплитер: динамические контексты + статическое дерево.
@@ -59,7 +64,8 @@ class ReplCompleter(Completer):
         providers: Ключ → callable. Поддерживаемые ключи:
             ``"track"`` (имена дорожек), ``"scale"`` (лады),
             ``"profile"`` (профили), ``"lane"`` (имена lane'ов
-            drum-машины). Необязательны — отсутствующие
+            drum-машины), ``"stage"`` (имена этапов цепочки).
+            Необязательны — отсутствующие
             ключи дают пустое дополнение.
     """
 
@@ -107,6 +113,15 @@ class ReplCompleter(Completer):
             )
         ):
             return self._track_names()
+        if len(path) == 2 and path[0] == "track" and path[1] == "chain":
+            # track chain <TAB> — имена дорожек (как track delete)
+            return self._track_names()
+        if len(path) >= 3 and path[0] == "track" and path[1] == "chain":
+            if "add" in path[2:]:
+                # track chain <name> add <TAB> — имена этапов (провайдер "stage")
+                return self._provider("stage")
+            # track chain <name> <TAB> — действия show/add/remove
+            return CHAIN_ACTIONS
         if path in (["evolve"], ["undo"], ["recall"], ["history"]):
             # имя дорожки — необязательный/первый аргумент ручной мутации
             return self._track_names()

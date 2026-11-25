@@ -268,6 +268,76 @@ class CommandExecutor:
     def _cmd_track_unroute(self, command: Command) -> CommandResult:
         return self._feedback(self._control.unroute_track(command.args[0]))
 
+    def _cmd_track_chain(self, command: Command) -> CommandResult:
+        """``track chain <name> show | add <stage> [k=v ...] | remove <n>``.
+
+        Существование дорожки и валидность этапа проверяет фасад: одна
+        точка правды, одинаковые сообщения для REPL, Push 2 и скриптов.
+        Ошибки разбора (действие, пары k=v, индекс) — здесь, код 1,
+        цикл живёт.
+        """
+        name, action = command.args[0], command.args[1].lower()
+        if action == "show":
+            return self._feedback(self._control.track_chain(name))
+        if action == "add":
+            return self._track_chain_add(name, command.args[2:])
+        if action == "remove":
+            return self._track_chain_remove(name, command.args[2:])
+        return CommandResult(
+            output=(
+                f"error: unknown action {action!r} "
+                "(choose from: show, add, remove)\n"
+                "usage: track chain <name> show | add <stage> [k=v ...] | remove <n>"
+            ),
+            code=1,
+        )
+
+    def _track_chain_add(self, name: str, tokens: tuple[str, ...]) -> CommandResult:
+        """``add <stage> [k=v ...]``: этап и пары параметров строками."""
+        if not tokens:
+            return CommandResult(
+                output=(
+                    "error: track chain add: missing stage name\n"
+                    "usage: track chain <name> add <stage> [k=v ...]"
+                ),
+                code=1,
+            )
+        params: dict[str, str] = {}
+        for token in tokens[1:]:
+            if "=" not in token:
+                return CommandResult(
+                    output=(
+                        f"error: параметр {token!r} без значения "
+                        "(ожидается «ключ=значение»)"
+                    ),
+                    code=1,
+                )
+            key, _, value = token.partition("=")
+            if key in params:
+                return CommandResult(
+                    output=f"error: дубликат параметра {key!r}",
+                    code=1,
+                )
+            params[key] = value
+        return self._feedback(self._control.track_chain_add(name, tokens[0], params))
+
+    def _track_chain_remove(self, name: str, tokens: tuple[str, ...]) -> CommandResult:
+        """``remove <n>``: 1-based индекс этапа."""
+        if not tokens:
+            return CommandResult(
+                output=(
+                    "error: track chain remove: missing index\n"
+                    "usage: track chain <name> remove <n>"
+                ),
+                code=1,
+            )
+        raw = tokens[0]
+        try:
+            index = int(raw)
+        except ValueError:
+            return CommandResult(output=f"error: {raw!r} is not a number", code=1)
+        return self._feedback(self._control.track_chain_remove(name, index))
+
     def _cmd_drum_add(self, command: Command) -> CommandResult:
         """``drum add [name]`` — создать drum-дорожку (имя опционально)."""
         name = command.args[0] if command.args else None

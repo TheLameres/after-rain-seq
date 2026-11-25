@@ -5,13 +5,48 @@ from __future__ import annotations
 import logging
 from dataclasses import FrozenInstanceError
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
+from src.app.application import App
+from src.app.engine_control import AppEngineControl
 from src.scripting.runner import ScriptRunner, ScriptRunReport, format_report
+from src.session.session import Session
 from tests.test_scripting_session import MockControl
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+class _SyncCfg:
+    """Минимальный sync-конфиг для ``_init_clock_manager`` (внутренний клок).
+
+    По образцу ``_Cfg`` из test_drum_engine_hook.py: без него фасадный
+    ``start_transport`` возвращает «clock subsystem disabled», и
+    ``session.start()`` в скрипте падает на своей строке.
+    """
+
+    enabled = True
+    clock_source = "internal"
+    midi_clock_device = None
+    bpm = 120.0
+    swing_amount = 0.0
+
+
+class _Reg:
+    """Мок-реестр портов: один адаптер, события никуда не уходят."""
+
+    def __init__(self) -> None:
+        self.adapter = MagicMock()
+
+    def all_outputs(self) -> list[MagicMock]:
+        return [self.adapter]
+
+    def flush_all(self) -> None:
+        return None
+
+    def get_output(self, label: str) -> MagicMock:
+        return self.adapter
 
 
 @pytest.fixture
@@ -244,3 +279,63 @@ class TestFormatReport:
         assert isinstance(report, ScriptRunReport)
         with pytest.raises(FrozenInstanceError):
             report.error = "x"  # type: ignore[misc]
+
+
+class TestTrackChainScripts:
+    """track_chain_add в скриптах: drum — предупреждение, строгий режим — ветвление (5.4)."""
+
+    @staticmethod
+    def _app_control(*, drum: bool) -> AppEngineControl:
+        """App с сессией, мок-реестром портов и внутренними часами.
+
+        Часы нужны ``session.start()``: фасадный ``start_transport`` требует
+        ``clock_manager`` (иначе «clock subsystem disabled»). Реестр портов
+        нужен ДО часов: ``_init_clock_manager`` строит Transport вместе с ним
+        (иначе «PortRegistry must be initialized before Transport»).
+        """
+        app = App(config_path="config.yaml", simulate=True)
+        app._port_registry = _Reg()  # type: ignore[assignment]
+        app._session = Session()
+        if drum:
+            app._session.create_drum_track()
+        else:
+            app._session.create_melodic_track("pad")
+        app._init_clock_manager(_SyncCfg())
+        return AppEngineControl(app)
+
+    def test_drum_chain_add_continues(self, tmp_path: Path) -> None:
+        """``track_chain_add`` на drum-дорожке не прерывает скрипт."""
+        path = _write(
+            tmp_path,
+            "drumchain.arain.py",
+            "session.track_chain_add('Drum 1', 'arpeggiate step=0.25')\n"
+            "session.start()\n",
+        )
+        runner = ScriptRunner(self._app_control(drum=True))
+        report = runner.run_file(path)
+        assert report.error is None
+        assert report.lines_executed == 2  # счётчик вызовов растёт
+        assert len(report.output_lines) == 2
+        assert "цепочка игнорируется" in report.output_lines[0]
+        assert "transport started" in report.output_lines[1]
+        # format_report не менялся: линии фидбека с номерами.
+        text = format_report(report)
+        assert "  1| " in text
+        assert "  ok: 2 call(s)" in text
+
+    def test_strict_mode_branches_on_error(self, tmp_path: Path) -> None:
+        """``fatal=False`` + проверка ``result.error`` — скрипт ветвится сам."""
+        path = _write(
+            tmp_path,
+            "strict.arain.py",
+            "r = session.track_chain_add('Pad 1', 'transpose step=1', fatal=False)\n"
+            "if r.error:\n"
+            "    session.track_chain_add('Pad 1', 'arpeggiate step=0.25', fatal=False)\n",
+        )
+        runner = ScriptRunner(self._app_control(drum=False))
+        report = runner.run_file(path)
+        assert report.error is None
+        assert report.lines_executed == 2
+        assert len(report.output_lines) == 2
+        assert "Неизвестный этап" in report.output_lines[0]
+        assert "arpeggiate step=0.25 direction=up" in report.output_lines[1]

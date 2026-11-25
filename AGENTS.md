@@ -91,13 +91,18 @@ src/sync/              ← клок: ClockManager/TickProxy/clock_source/clock_s
                            транспорт: transport/swing/transport_event/capture_output
 src/session/           ← граф дорожек и движки (зависит от harmony/):
                              events/   ChordEvent, NoteEvent, DrumEvent (слой 0)
-                             model/    Track, MelodicTrack, DrumTrack, профили,
-                                       PatternSpec, euclidean, chord_math, version_history
+                             model/    Track (+ поле chain — цепочка модификаций),
+                                       MelodicTrack, DrumTrack, профили,
+                                       PatternSpec, euclidean, chord_math,
+                                       density (листовой, ниже modify/engine),
+                                       version_history
                              graph/    TrackGraph (топосорт, детекция циклов)
                              mutation/ NoteDrift, FloatingEuclidean, ParamDrift,
                                        MutationEngine (+ drift_tables, config,
                                        track_version: снимки версий)
-                             modify/   arpeggiate, chain, densify
+                             modify/   arpeggiate, chain (типовой листовой, его
+                                       импортирует model.track), densify,
+                                       stage_registry (реестр этапов цепочки)
                              drum/     DrumEngine, DrumConfig
                              engine/   BeatScheduler, generators, MelodicEngine
                              session.py  Session (модель+граф), propagate_chords()
@@ -105,10 +110,12 @@ src/scripting/         ← скриптовый движок (Python DSL, пла
                            (фасад над EngineControl ABC), ScriptValidator
                            (compile + AST-линт), ScriptRunner (+ format_report);
                            импортирует repl.ABC (engine_control), core, harmony,
-                           session.model — строго вниз, ниже repl по зависимости
-                           (исключение из порядка: тянется вверх к session/harmony и
-                           вниз к repl — связь с repl разорвана через ABC EngineControl,
-                           циклов на уровне модулей нет)
+                           session.model, session.modify.stage_registry
+                           (parse_stage_spec) — строго вниз, ниже repl по
+                           зависимости (исключение из порядка: тянется вверх к
+                           session/harmony/modify и вниз к repl — связь с repl
+                           разорвана через ABC EngineControl, циклов на уровне
+                           модулей нет)
 src/harmony/           ← Harmony (Root+Scale, валидация ладов), voicings (DIATONIC_*,
                            VOICINGS, invert), progressions, degree_names — чистая логика
 src/core/              ← color, engine_result (базовые типы)

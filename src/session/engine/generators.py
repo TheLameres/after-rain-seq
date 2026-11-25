@@ -35,6 +35,7 @@ from src.session.model.chord_math import (
     chord_degrees_for,
     pattern_length,
 )
+from src.session.model.density import density_keep
 from src.session.model.euclidean import PEuclideanCached
 from src.session.model.pattern_spec import (
     FAMILY_CC_ONLY,
@@ -177,7 +178,7 @@ def _gen_free_mono(ctx: GenerationContext) -> list[NoteEvent]:
 
     notes: list[NoteEvent] = []
     for i, degree in enumerate(degrees):
-        if not _density_keep(i, track.density):
+        if not density_keep(i, track.density):
             continue  # макро-ось DEN (D2): разрежение паттерна
         velocity = spec.velocity_accent if i == 0 else spec.velocity_base
         notes.append(
@@ -275,20 +276,6 @@ def _density_pulses(base_pulses: int, steps: int, density: float) -> int:
     """
     scaled = round(base_pulses * (0.25 + 0.75 * density))
     return max(1, min(steps, scaled))
-
-
-def _density_keep(index: int, density: float) -> bool:
-    """Детерминированный фильтр плотности для free_mono (план D2 §3.6).
-
-    Шаг 0 (акцент) всегда играет. Остальные — псевдо-случайно по индексу
-    (хэш константа), порог ``0.25 + 0.75 * density``: плотность 1.0 → все
-    ноты, 0.0 → ~25%. Детерминизм важен: паттерн перегенерируется на
-    каждом цикле и должен оставаться стабильным.
-    """
-    if index == 0:
-        return True
-    h = ((index * 2654435761) % 1000) / 1000.0
-    return h < (0.25 + 0.75 * density)
 
 
 def _slice_stab(ctx: GenerationContext, window: list[ChordEvent]) -> list[NoteEvent]:

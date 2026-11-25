@@ -12,6 +12,8 @@ from abc import ABC, abstractmethod
 
 from src.session.events.chord_event import ChordEvent
 from src.session.events.drum_event import DrumEvent
+from src.session.events.note_event import NoteEvent
+from src.session.modify.chain import Chain
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +37,10 @@ class Track(ABC):
         sources: Имена источников (максимум 2: ``"SOURCE"``, ``"SOURCE2"``).
         outbox: Опубликованные события (``ChordEvent`` для мелодических,
             ``DrumEvent`` для ударных) для дорожек-наследников.
+        chain: Цепочка модификаций ``Chain[NoteEvent]`` (дефолт — пустая,
+            тождество). Присвоение проходит fail-fast валидацию: не
+            ``Chain`` — ``TypeError``, элемент без ``name`` (str) или без
+            callable ``process`` — ``ValueError``.
     """
 
     def __init__(
@@ -61,6 +67,45 @@ class Track(ABC):
         # Ручная мутация (spec §5): ожидающий запрос. Ставится фасадом
         # (NEW/evolve), снимается движком на границе цикла. Переживает stop.
         self.pending: bool = False
+        # Цепочка модификаций (track-modify-chain): пустая цепочка — тождество.
+        self._chain: Chain[NoteEvent] = Chain()
+
+    # ------------------------------------------------------------------
+    # Цепочка модификаций (track-modify-chain)
+    # ------------------------------------------------------------------
+
+    @property
+    def chain(self) -> Chain[NoteEvent]:
+        """Цепочка модификаций дорожки (пустая — тождество)."""
+        return self._chain
+
+    @chain.setter
+    def chain(self, value: Chain[NoteEvent]) -> None:
+        """Установить цепочку модификаций (fail-fast валидация).
+
+        Инвариант «в треке всегда валидная цепочка»: значение не ``Chain``
+        — ``TypeError``; элемент ``stages`` без ``name`` (str) или без
+        callable ``process`` — ``ValueError``. Параметры этапов валидируются
+        самими этапами при конструировании, поэтому сеттер проверяет только
+        структуру.
+        """
+        if not isinstance(value, Chain):
+            raise TypeError(
+                f"Цепочка должна быть Chain, получено {type(value).__name__}"
+            )
+        for stage in value.stages:
+            name = getattr(stage, "name", None)
+            if not isinstance(name, str):
+                # Структурная валидация этапа (design §1) — ValueError.
+                raise ValueError(  # noqa: TRY004
+                    f"Этап цепочки без имени (str): {stage!r}"
+                )
+            if not callable(getattr(stage, "process", None)):
+                # Callable-проверка — часть того же контракта этапа.
+                raise ValueError(  # noqa: TRY004
+                    f"Этап цепочки без callable process: {stage!r}"
+                )
+        self._chain = value
 
     # ------------------------------------------------------------------
     # Абстрактный интерфейс

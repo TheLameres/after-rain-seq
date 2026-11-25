@@ -130,3 +130,17 @@ class TestStageProtocolAcceptsReadOnlyName:
         """Этап с обычным атрибутом тоже подходит — протокол только читает."""
         stages: list[Stage[Ev]] = [Append("a")]
         assert stages[0].name == "append"
+
+
+class TestChainFrozen:
+    """Chain — frozen dataclass: этапы нельзя заменить после создания."""
+
+    def test_stages_assignment_frozen(self) -> None:
+        chain = Chain([Append("a")])
+        with pytest.raises(Exception):
+            chain.stages = [Append("b")]  # type: ignore[misc]
+
+    def test_default_empty_constructor(self) -> None:
+        assert Chain() == Chain([])
+        assert len(Chain()) == 0
+        assert Chain().process(_events(), CTX) == _events()

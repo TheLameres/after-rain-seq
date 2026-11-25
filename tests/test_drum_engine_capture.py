@@ -94,9 +94,10 @@ def test_capture_no_duplicates_and_pairs() -> None:
     for entry in ons:
         if entry.beat + 0.25 >= 8.0:
             continue  # off за пределами лупа
-        assert (entry.note, round(entry.beat + 0.25, 9)) in off_keys, (
-            f"нет note_off для {entry.note}@{entry.beat}"
-        )
+        assert (
+            entry.note,
+            round(entry.beat + 0.25, 9),
+        ) in off_keys, f"нет note_off для {entry.note}@{entry.beat}"
 
     # Канал drum-дорожки — 9 (GM ch10).
     assert all(e.channel == 9 for e in entries)

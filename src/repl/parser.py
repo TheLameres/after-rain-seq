@@ -255,6 +255,22 @@ _SPECS: tuple[CommandSpec, ...] = (
         join_args=True,
     ),
     CommandSpec(
+        name="track chain",
+        domain="track",
+        action="chain",
+        usage=(
+            "track chain <name> show | add <stage> [k=v ...] | remove <n>  "
+            "(имена с пробелами — в кавычках)"
+        ),
+        help=(
+            "Цепочка модификаций дорожки: показать этапы, добавить этап "
+            "в конец (arpeggiate|densify с парами ключ=значение), удалить по номеру"
+        ),
+        min_args=2,
+        max_args=16,
+        join_args=False,
+    ),
+    CommandSpec(
         name="drum add",
         domain="drum",
         action="add",
